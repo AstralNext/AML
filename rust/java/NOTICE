@@ -1,0 +1,24 @@
+Modrinth Theseus (Java agent)
+=============================
+
+This directory contains code derived from the Modrinth App (codename Theseus)
+Java agent:
+
+  https://github.com/modrinth/code/tree/main/packages/app-lib/java
+
+Package namespace: com.modrinth.theseus
+
+Copyright (C) Modrinth / Rinth, Inc. and contributors
+
+Licensed under the GNU General Public License, Version 3 only (GPL-3.0-only).
+The full license text is available at:
+
+  https://github.com/modrinth/code/blob/main/apps/app/LICENSE
+
+See also Modrinth App copying notes:
+
+  https://github.com/modrinth/code/blob/main/apps/app/COPYING.md
+
+Modrinth branding (including logos and other trademarks of Rinth, Inc.) is
+not licensed under GPL and is not used by this project without permission.
+All rights reserved for those branding elements. © Rinth, Inc.

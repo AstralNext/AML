@@ -1,0 +1,183 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            artifact: windows-x64
+          - os: ubuntu-22.04
+            target: linux
+            artifact: linux-x64
+          - os: macos-14
+            target: macos
+            artifact: macos-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter (beta)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: beta
+          cache: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Linux dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev \
+            libayatana-appindicator3-dev \
+            libssl-dev
+
+      - name: Normalize line endings (Unix)
+        if: matrix.target != 'windows'
+        run: |
+          find rust/java -type f \( \
+            -name '*.java' -o -name '*.kts' -o -name '*.properties' -o \
+            -name 'gradlew' -o -name '*.sh' \
+          \) -print0 | xargs -0 perl -pi -e 's/\r$//'
+          chmod +x rust/java/gradlew
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          raw=$(grep -E '^version:' pubspec.yaml | head -1 | awk '{print $2}' | tr -d '\r')
+          # 0.0.1-beta+3 -> 0.0.1-beta-3
+          safe=${raw//+/-}
+          echo "raw=$raw" >> "$GITHUB_OUTPUT"
+          echo "safe=$safe" >> "$GITHUB_OUTPUT"
+          echo "Version: $raw ($safe)"
+
+      - name: Build Windows
+        if: matrix.target == 'windows'
+        run: flutter build windows --release
+
+      - name: Package Windows
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          $out = "aml-${{ matrix.artifact }}-${{ steps.ver.outputs.safe }}"
+          New-Item -ItemType Directory -Force -Path "dist\$out" | Out-Null
+          Copy-Item -Path "build\windows\x64\runner\Release\*" -Destination "dist\$out" -Recurse -Force
+          if (Test-Path "dist\$out.zip") { Remove-Item "dist\$out.zip" -Force }
+          # Zip the folder itself so extract yields aml-windows-x64-…/aml.exe
+          Compress-Archive -Path "dist\$out" -DestinationPath "dist\$out.zip" -Force
+          Remove-Item "dist\$out" -Recurse -Force
+          Get-Item "dist\$out.zip" | Format-List Name, Length
+
+      - name: Build Linux
+        if: matrix.target == 'linux'
+        run: flutter build linux --release
+
+      - name: Package Linux
+        if: matrix.target == 'linux'
+        run: |
+          set -euo pipefail
+          OUT="aml-${{ matrix.artifact }}-${{ steps.ver.outputs.safe }}"
+          mkdir -p dist
+          tar -C build/linux/x64/release/bundle -czf "dist/${OUT}.tar.gz" .
+          ls -lh "dist/${OUT}.tar.gz"
+
+      - name: Build macOS
+        if: matrix.target == 'macos'
+        run: flutter build macos --release
+
+      - name: Package macOS
+        if: matrix.target == 'macos'
+        run: |
+          set -euo pipefail
+          OUT="aml-${{ matrix.artifact }}-${{ steps.ver.outputs.safe }}"
+          APP=$(find build/macos -name '*.app' -type d | head -1)
+          test -n "$APP"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/${OUT}.zip"
+          ls -lh "dist/${OUT}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aml-${{ matrix.artifact }}-${{ steps.ver.outputs.safe }}
+          # Only the archive — not dist/<folder>, or the downloaded
+          # artifact zip will nest folder + zip (same name).
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect files
+        id: files
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp -v {} upload/ \;
+          ls -lh upload
+          echo "count=$(find upload -type f | wc -l)" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: upload/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
