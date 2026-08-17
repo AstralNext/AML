@@ -137,10 +137,25 @@ class McimFallbackHttp {
         mirrors.add(mirror);
       }
     }
+    final alts = forgecdnHostAlts(trimmed);
     if (CdnRuntime.officialFirst) {
-      return [trimmed, ...mirrors];
+      return [...alts, ...mirrors];
     }
-    return [...mirrors, trimmed];
+    return [...mirrors, ...alts];
+  }
+
+  /// CF API still returns `edge.forgecdn.net`, which often 404s; mediafilez is
+  /// the same file and usually answers `206` for Range. Prefer mediafilez.
+  static List<String> forgecdnHostAlts(String url) {
+    const edge = 'edge.forgecdn.net';
+    const media = 'mediafilez.forgecdn.net';
+    if (url.contains(edge)) {
+      return [url.replaceFirst(edge, media), url];
+    }
+    if (url.contains(media)) {
+      return [url, url.replaceFirst(media, edge)];
+    }
+    return [url];
   }
 
   static String? mirrorDownloadUrl(String url, String host) {

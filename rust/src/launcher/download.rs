@@ -174,6 +174,27 @@ pub(crate) async fn download_to_path_with_mcim_fallback(
     on_retry: Option<&(dyn Fn(u32, u32) + Send + Sync)>,
     on_bytes: Option<BytesProgressFn>,
 ) -> Result<()> {
+    download_to_path_with_mcim_fallback_headers(
+        client,
+        url,
+        dest,
+        expected_sha1,
+        None,
+        on_retry,
+        on_bytes,
+    )
+    .await
+}
+
+pub(crate) async fn download_to_path_with_mcim_fallback_headers(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    expected_sha1: Option<&str>,
+    extra_headers: Option<&[(&str, &str)]>,
+    on_retry: Option<&(dyn Fn(u32, u32) + Send + Sync)>,
+    on_bytes: Option<BytesProgressFn>,
+) -> Result<()> {
     let mut last_err = None;
     for candidate in crate::config::mcim_url_candidates(url) {
         match download_to_path_with_retry(
@@ -181,7 +202,7 @@ pub(crate) async fn download_to_path_with_mcim_fallback(
             &candidate,
             dest,
             expected_sha1,
-            None,
+            extra_headers,
             on_retry,
             on_bytes.clone(),
         )

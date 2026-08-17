@@ -232,20 +232,57 @@ pub fn mcim_url_candidates(url: &str) -> Vec<String> {
         }
     }
 
+    let official = forgecdn_official_urls(url);
+
     let mut out = Vec::new();
     if settings.official_first {
-        out.push(url.to_string());
+        out.extend(official);
         out.extend(mirrors);
     } else {
         out.extend(mirrors);
-        if !out.iter().any(|x| x == url) {
-            out.push(url.to_string());
+        for u in official {
+            if !out.iter().any(|x| x == &u) {
+                out.push(u);
+            }
         }
     }
     if out.is_empty() {
         out.push(url.to_string());
     }
     out
+}
+
+/// CurseForge API still hands out `edge.forgecdn.net`, which often 404s.
+/// `mediafilez.forgecdn.net` is the same object and typically supports Range.
+fn forgecdn_official_urls(url: &str) -> Vec<String> {
+    const EDGE: &str = "edge.forgecdn.net";
+    const MEDIA: &str = "mediafilez.forgecdn.net";
+    let lower = url.to_lowercase();
+    if lower.contains(EDGE) {
+        vec![
+            replace_ignore_ascii_case(url, EDGE, MEDIA),
+            url.to_string(),
+        ]
+    } else if lower.contains(MEDIA) {
+        let edge = replace_ignore_ascii_case(url, MEDIA, EDGE);
+        vec![url.to_string(), edge]
+    } else {
+        vec![url.to_string()]
+    }
+}
+
+fn replace_ignore_ascii_case(haystack: &str, from: &str, to: &str) -> String {
+    let lower = haystack.to_lowercase();
+    let from_l = from.to_lowercase();
+    if let Some(idx) = lower.find(&from_l) {
+        let mut out = String::with_capacity(haystack.len() - from.len() + to.len());
+        out.push_str(&haystack[..idx]);
+        out.push_str(to);
+        out.push_str(&haystack[idx + from.len()..]);
+        out
+    } else {
+        haystack.to_string()
+    }
 }
 
 fn rewrite_mcim(url: &str) -> Option<String> {
@@ -332,3 +369,20 @@ pub const CURSEFORGE_API_KEY_DEFAULT: &str =
 /// Azul API 基础URL
 pub const AZUL_API_BASE_URL: &str =
     "https://api.azul.com/metadata/v1/zulu/packages";
+
+#[cfg(test)]
+mod tests {
+    use super::forgecdn_official_urls;
+
+    #[test]
+    fn prefers_mediafilez_over_edge() {
+        let urls = forgecdn_official_urls(
+            "https://edge.forgecdn.net/files/8649/77/All%20the%20Mods%2010-8.0.zip",
+        );
+        assert_eq!(
+            urls[0],
+            "https://mediafilez.forgecdn.net/files/8649/77/All%20the%20Mods%2010-8.0.zip"
+        );
+        assert!(urls[1].contains("edge.forgecdn.net"));
+    }
+}

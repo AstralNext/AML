@@ -249,6 +249,27 @@ pub async fn download_cf_file(
     Ok(bytes::Bytes::from(bytes))
 }
 
+/// Download a CurseForge file onto [dest], using parallel ranges for large zips.
+pub async fn download_cf_file_to_path(
+    url: &str,
+    dest: &Path,
+    on_bytes: Option<crate::launcher::progress::BytesProgressFn>,
+) -> Result<()> {
+    let client = super::super::manifest::http_client()?;
+    let key = curseforge_api_key();
+    let headers = [("x-api-key", key.as_str()), ("Accept", "*/*")];
+    super::super::download::download_to_path_with_mcim_fallback_headers(
+        &client,
+        url,
+        dest,
+        None,
+        Some(&headers),
+        None,
+        on_bytes,
+    )
+    .await
+}
+
 pub fn read_cf_meta_from_zip(data: &[u8]) -> Result<(CfPackMeta, String)> {
     let mut archive = ZipArchive::new(Cursor::new(data))?;
     let prefix = zip_entry_prefix(&mut archive, "manifest.json");

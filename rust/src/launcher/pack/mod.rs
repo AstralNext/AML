@@ -1,7 +1,7 @@
 //! Modpack import/export pipeline (Modrinth / CurseForge / MultiMC / MCBBS).
 
 mod curseforge;
-pub use curseforge::download_cf_file;
+pub use curseforge::{download_cf_file, download_cf_file_to_path};
 mod detect;
 mod export_common;
 mod export_mcbbs;

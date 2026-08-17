@@ -225,14 +225,19 @@ async fn probe(
     extra_headers: Option<&[(&str, &str)]>,
 ) -> Result<Probe> {
     let headers = owned_headers(extra_headers);
-    let resp = send(client, url, &headers, Some("bytes=0-0")).await?;
+    // 1 MiB — `bytes=0-0` is ignored by several CDNs (MCIM / ForgeCDN) which
+    // then answer 200 and would lock us into a single connection.
+    const PROBE_RANGE: &str = "bytes=0-1048575";
+    let resp = send(client, url, &headers, Some(PROBE_RANGE)).await?;
     let status = resp.status();
     if status == StatusCode::PARTIAL_CONTENT {
         let total = parse_content_range_total(resp.headers().get(reqwest::header::CONTENT_RANGE));
-        // Drain the 1-byte body so the connection can be reused.
-        let _ = resp.bytes().await;
+        drop(resp);
         match total {
-            Some(size) if size > MULTI_THREAD_THRESHOLD => Ok(Probe::Ranged(size)),
+            Some(size) if size > MULTI_THREAD_THRESHOLD => {
+                tracing::info!(size, url, parts = MAX_PARTS, "multi-thread download");
+                Ok(Probe::Ranged(size))
+            }
             _ => {
                 let full = send(client, url, &headers, None).await?;
                 let len = full.content_length();
@@ -241,7 +246,17 @@ async fn probe(
         }
     } else if status.is_success() {
         let len = resp.content_length();
-        Ok(Probe::Single(resp, len))
+        drop(resp);
+        if let Some(size) = len.filter(|n| *n > MULTI_THREAD_THRESHOLD) {
+            // Server ignored the probe range. Real 2 MiB+ ranges may still
+            // return 206; `get_*_ranged` falls back if they do not.
+            tracing::info!(size, url, "probe was 200; still trying ranged download");
+            Ok(Probe::Ranged(size))
+        } else {
+            let full = send(client, url, &headers, None).await?;
+            let full_len = full.content_length().or(len);
+            Ok(Probe::Single(full, full_len))
+        }
     } else {
         Err(anyhow!("HTTP {status}: {url}"))
     }
@@ -489,10 +504,11 @@ async fn send(
     for (k, v) in extra_headers {
         req = req.header(k.as_str(), v.as_str());
     }
+    // Identity on every file GET: gzip hides Content-Length and makes CDNs
+    // ignore Range. Zips/jars are already compressed.
+    req = req.header(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
     if let Some(range) = range {
-        req = req
-            .header(RANGE, range)
-            .header(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
+        req = req.header(RANGE, range);
     }
     let resp = tokio::time::timeout(HEADER_TIMEOUT, req.send())
         .await

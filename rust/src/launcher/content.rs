@@ -1488,28 +1488,28 @@ pub async fn create_instance_from_modrinth_modpack(
     tokio::fs::create_dir_all(&cache_dir).await?;
     let mrpack_path = cache_dir.join(format!("{version_id}.mrpack"));
 
-    let bytes = if download::file_already_ok(&mrpack_path, None).await {
+    if download::file_already_ok(&mrpack_path, None).await {
         report(0.08, format!("Using cached {}?", file.filename));
-        tokio::fs::read(&mrpack_path).await?
     } else {
         report(0.08, format!("Downloading {}?", file.filename));
         let on_bytes = on_progress.clone().map(|cb| {
             progress::file_bytes_cb(cb, "Downloading pack", file.filename.clone(), 0.05, 0.28)
         });
-        let bytes = download::download_checked_with_mcim_fallback_bytes(
+        download::download_to_path_with_mcim_fallback(
             &client,
             &file.url,
+            &mrpack_path,
             None,
             None,
             on_bytes,
         )
         .await?;
-        tokio::fs::write(&mrpack_path, &bytes).await?;
-        bytes
-    };
+    }
 
     let pack_meta = {
-        let mut archive = ZipArchive::new(Cursor::new(bytes.as_slice()))?;
+        let pack_file = std::fs::File::open(&mrpack_path)
+            .with_context(|| format!("open {}", mrpack_path.display()))?;
+        let mut archive = ZipArchive::new(pack_file)?;
         let mut index_file = archive.by_name("modrinth.index.json")?;
         let mut text = String::new();
         index_file.read_to_string(&mut text)?;
@@ -1677,15 +1677,15 @@ pub async fn reinstall_or_switch_modpack(
         let on_bytes = on_progress.clone().map(|cb| {
             progress::file_bytes_cb(cb, "Downloading pack", file.filename.clone(), 0.05, 0.28)
         });
-        let bytes = download::download_checked_with_mcim_fallback_bytes(
+        download::download_to_path_with_mcim_fallback(
             &client,
             &file.url,
+            &mrpack_path,
             None,
             None,
             on_bytes,
         )
         .await?;
-        tokio::fs::write(&mrpack_path, &bytes).await?;
     }
 
     db::set_install_stage(&state.pool, instance_id, InstallStage::Installing).await?;
@@ -2013,8 +2013,7 @@ pub async fn create_instance_from_curseforge_modpack(
         let on_bytes = on_progress.clone().map(|cb| {
             progress::file_bytes_cb(cb, "Downloading pack", file.file_name.clone(), 0.05, 0.35)
         });
-        let bytes = super::pack::download_cf_file(&download_url, on_bytes).await?;
-        tokio::fs::write(&pack_path, &bytes).await?;
+        super::pack::download_cf_file_to_path(&download_url, &pack_path, on_bytes).await?;
     }
 
     report(0.35, "Importing CurseForge modpack?".into());
