@@ -40,7 +40,8 @@ A new Flutter FFI plugin project.
     'DEFINES_MODULE' => 'YES',
     # Flutter.framework does not contain a i386 slice.
     'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
-    # reqwest pulls system_configuration / native-tls; staticlib needs explicit frameworks.
-    'OTHER_LDFLAGS' => '-force_load ${BUILT_PRODUCTS_DIR}/librust_lib_aml.a -framework SystemConfiguration -framework Security',
+    # reqwest pulls system_configuration / native-tls; zip/bzip2-sys needs libbz2.
+    # staticlib is force-loaded, so native deps must be listed here.
+    'OTHER_LDFLAGS' => '-force_load ${BUILT_PRODUCTS_DIR}/librust_lib_aml.a -framework SystemConfiguration -framework Security -lbz2',
   }
 end
