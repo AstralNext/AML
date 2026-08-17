@@ -31,6 +31,24 @@ class UiSettings {
   /// Collapsed group header titles on the library page.
   final List<String> libraryCollapsedGroups;
 
+  /// When true, try official CurseForge/Modrinth/Mojang URLs before mirrors.
+  final bool cdnOfficialFirst;
+
+  /// MCIM (`mod.mcimirror.top`) for CurseForge / Modrinth API and files.
+  final bool cdnMcim;
+
+  /// Pysio file CDN behind MCIM (`mcim-files.pysio.online`).
+  final bool cdnPysio;
+
+  /// BMCLAPI for Minecraft client / libraries / assets / authlib.
+  final bool cdnBmclapi;
+
+  /// Network proxy: `system` (default) | `off` | `manual`.
+  final String proxyMode;
+
+  /// Manual proxy URL, e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:7890`.
+  final String proxyUrl;
+
   const UiSettings({
     required this.themePresetId,
     this.onboardingDismissed = false,
@@ -43,6 +61,12 @@ class UiSettings {
     this.libraryGroupBy = 'none',
     this.libraryTab = 'all',
     this.libraryCollapsedGroups = const [],
+    this.cdnOfficialFirst = false,
+    this.cdnMcim = true,
+    this.cdnPysio = true,
+    this.cdnBmclapi = true,
+    this.proxyMode = 'off',
+    this.proxyUrl = '',
   });
 
   factory UiSettings.defaults() => const UiSettings(
@@ -57,6 +81,12 @@ class UiSettings {
         libraryGroupBy: 'none',
         libraryTab: 'all',
         libraryCollapsedGroups: [],
+        cdnOfficialFirst: false,
+        cdnMcim: true,
+        cdnPysio: true,
+        cdnBmclapi: true,
+        proxyMode: 'off',
+        proxyUrl: '',
       );
 
   UiSettings copyWith({
@@ -71,6 +101,12 @@ class UiSettings {
     String? libraryGroupBy,
     String? libraryTab,
     List<String>? libraryCollapsedGroups,
+    bool? cdnOfficialFirst,
+    bool? cdnMcim,
+    bool? cdnPysio,
+    bool? cdnBmclapi,
+    String? proxyMode,
+    String? proxyUrl,
   }) {
     return UiSettings(
       themePresetId: themePresetId ?? this.themePresetId,
@@ -87,6 +123,12 @@ class UiSettings {
       libraryTab: libraryTab ?? this.libraryTab,
       libraryCollapsedGroups:
           libraryCollapsedGroups ?? this.libraryCollapsedGroups,
+      cdnOfficialFirst: cdnOfficialFirst ?? this.cdnOfficialFirst,
+      cdnMcim: cdnMcim ?? this.cdnMcim,
+      cdnPysio: cdnPysio ?? this.cdnPysio,
+      cdnBmclapi: cdnBmclapi ?? this.cdnBmclapi,
+      proxyMode: proxyMode ?? this.proxyMode,
+      proxyUrl: proxyUrl ?? this.proxyUrl,
     );
   }
 
@@ -102,6 +144,12 @@ class UiSettings {
         'libraryGroupBy': libraryGroupBy,
         'libraryTab': libraryTab,
         'libraryCollapsedGroups': libraryCollapsedGroups,
+        'cdnOfficialFirst': cdnOfficialFirst,
+        'cdnMcim': cdnMcim,
+        'cdnPysio': cdnPysio,
+        'cdnBmclapi': cdnBmclapi,
+        'proxyMode': proxyMode,
+        'proxyUrl': proxyUrl,
       };
 
   factory UiSettings.fromJson(Map<String, dynamic> json) {
@@ -122,6 +170,23 @@ class UiSettings {
       libraryGroupBy: json['libraryGroupBy'] as String? ?? 'none',
       libraryTab: json['libraryTab'] as String? ?? 'all',
       libraryCollapsedGroups: collapsed,
+      cdnOfficialFirst: json['cdnOfficialFirst'] as bool? ?? false,
+      cdnMcim: json['cdnMcim'] as bool? ?? true,
+      cdnPysio: json['cdnPysio'] as bool? ?? true,
+      cdnBmclapi: json['cdnBmclapi'] as bool? ?? true,
+      proxyMode: _parseProxyMode(json['proxyMode'] as String?),
+      proxyUrl: json['proxyUrl'] as String? ?? '',
     );
+  }
+}
+
+String _parseProxyMode(String? value) {
+  switch (value) {
+    case 'off':
+    case 'manual':
+    case 'system':
+      return value!;
+    default:
+      return 'off';
   }
 }

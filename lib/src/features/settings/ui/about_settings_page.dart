@@ -99,8 +99,8 @@ class _AboutSettingsPageState extends State<AboutSettingsPage> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '感谢 Modrinth、MCIM、authlib-injector、CurseForge / Overwolf、'
-                  '小米 MiSans。',
+                  '感谢 Modrinth、MCIM、Pysio、BMCLAPI、authlib-injector、'
+                  'CurseForge / Overwolf、小米 MiSans。',
                   style: TextStyle(
                     fontSize: 13,
                     height: 1.45,
@@ -127,6 +127,14 @@ class _AboutSettingsPageState extends State<AboutSettingsPage> {
                       defaultBackgroundColor: tokens.colorButtonBg,
                       defaultColor: tokens.colorContrast,
                       onTap: () => _open('https://mcimirror.top'),
+                    ),
+                    NavRectButton(
+                      isSelected: false,
+                      icon: Icons.speed,
+                      text: 'BMCLAPI',
+                      defaultBackgroundColor: tokens.colorButtonBg,
+                      defaultColor: tokens.colorContrast,
+                      onTap: () => _open('https://bmclapi.bangbang93.com'),
                     ),
                     NavRectButton(
                       isSelected: false,

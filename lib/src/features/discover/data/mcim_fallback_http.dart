@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 
 import 'package:aml/src/features/discover/data/mcim_api.dart';
+import 'package:aml/src/features/settings/application/cdn_runtime.dart';
 import 'package:http/http.dart' as http;
 
 /// Official-first HTTP with MCIM mirror fallback (API + CDN URLs).
@@ -85,9 +86,15 @@ class McimFallbackHttp {
   }
 
   static List<Uri> apiUriCandidates(Uri official) {
-    final mirror = mirrorApiUri(official);
-    if (mirror == null || mirror == official) return [official];
-    return [official, mirror];
+    final mirrors = <Uri>[];
+    if (CdnRuntime.mcim) {
+      final mirror = mirrorApiUri(official);
+      if (mirror != null && mirror != official) mirrors.add(mirror);
+    }
+    if (CdnRuntime.officialFirst) {
+      return [official, ...mirrors];
+    }
+    return [...mirrors, official];
   }
 
   static Uri? mirrorApiUri(Uri official) {
@@ -117,25 +124,39 @@ class McimFallbackHttp {
   static List<String> downloadUrlCandidates(String url) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return const [];
-    final mirror = mirrorDownloadUrl(trimmed);
-    if (mirror == null || mirror == trimmed) return [trimmed];
-    return [trimmed, mirror];
+    final mirrors = <String>[];
+    if (CdnRuntime.mcim) {
+      final mirror = mirrorDownloadUrl(trimmed, McimApi.mirrorHost);
+      if (mirror != null && mirror != trimmed) mirrors.add(mirror);
+    }
+    if (CdnRuntime.pysio) {
+      final mirror = mirrorDownloadUrl(trimmed, CdnRuntime.pysioHost);
+      if (mirror != null &&
+          mirror != trimmed &&
+          !mirrors.contains(mirror)) {
+        mirrors.add(mirror);
+      }
+    }
+    if (CdnRuntime.officialFirst) {
+      return [trimmed, ...mirrors];
+    }
+    return [...mirrors, trimmed];
   }
 
-  static String? mirrorDownloadUrl(String url) {
+  static String? mirrorDownloadUrl(String url, String host) {
     final uri = Uri.tryParse(url);
     if (uri == null) return null;
     switch (uri.host) {
       case 'cdn.modrinth.com':
         return url.replaceFirst(
           '${uri.scheme}://cdn.modrinth.com',
-          McimApi.mirrorHost,
+          host,
         );
       case 'edge.forgecdn.net':
       case 'mediafilez.forgecdn.net':
         return url.replaceFirst(
           '${uri.scheme}://${uri.host}',
-          McimApi.mirrorHost,
+          host,
         );
       default:
         return null;

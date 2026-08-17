@@ -17,10 +17,12 @@ pub struct AppState {
 pub async fn init_state(resource_dir: &str) -> anyhow::Result<Arc<AppState>> {
     if let Some(existing) = STATE.get() {
         *existing.resource_dir.lock().await = resource_dir.to_string();
+        crate::config::set_cdn_resource_dir(resource_dir);
         return Ok(existing.clone());
     }
 
     crate::launcher::dirs::ensure_layout(resource_dir).await?;
+    crate::config::set_cdn_resource_dir(resource_dir);
     let pool = db::open_pool(resource_dir).await?;
     let state = Arc::new(AppState {
         pool,

@@ -35,7 +35,7 @@ pub struct FullProfile {
 }
 
 pub async fn fetch_profile(access_token: &str) -> Result<FullProfile> {
-    let client = reqwest::Client::new();
+    let client = crate::launcher::manifest::http_client()?;
     Ok(client
         .get("https://api.minecraftservices.com/minecraft/profile")
         .bearer_auth(access_token)
@@ -69,7 +69,7 @@ pub async fn equip_skin(
             .mime_str("image/png")?,
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::launcher::manifest::http_client()?;
     let resp = client
         .post("https://api.minecraftservices.com/minecraft/profile/skins")
         .bearer_auth(access_token)
@@ -84,7 +84,7 @@ pub async fn equip_skin(
 }
 
 pub async fn equip_cape(access_token: &str, cape_id: &str) -> Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::launcher::manifest::http_client()?;
     client
         .put("https://api.minecraftservices.com/minecraft/profile/capes/active")
         .bearer_auth(access_token)
@@ -97,7 +97,7 @@ pub async fn equip_cape(access_token: &str, cape_id: &str) -> Result<()> {
 }
 
 pub async fn unequip_cape(access_token: &str) -> Result<()> {
-    let client = reqwest::Client::new();
+    let client = crate::launcher::manifest::http_client()?;
     client
         .delete("https://api.minecraftservices.com/minecraft/profile/capes/active")
         .bearer_auth(access_token)
@@ -114,7 +114,7 @@ pub async fn download_bytes(url: &str) -> Result<Vec<u8>> {
             .decode(rest)
             .map_err(|e| anyhow!("base64: {e}"));
     }
-    let client = reqwest::Client::new();
+    let client = crate::launcher::manifest::http_client()?;
     Ok(client
         .get(url)
         .header("Accept", "image/png")

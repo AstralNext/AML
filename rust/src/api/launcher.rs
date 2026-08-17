@@ -588,6 +588,7 @@ pub struct ModFileDto {
     pub author_type: Option<String>,
     pub update_version_id: Option<String>,
     pub has_update: bool,
+    pub is_missing: bool,
 }
 
 pub async fn list_instance_mods(instance_id: String) -> Result<Vec<ModFileDto>, String> {
@@ -638,47 +639,86 @@ pub async fn list_instance_mods(instance_id: String) -> Result<Vec<ModFileDto>, 
                 };
                 by_path.remove(&alt)
             });
-            out.push(ModFileDto {
-                name: name.clone(),
-                relative_path: relative,
+            out.push(mod_file_from_entry(
+                db_hit.as_ref(),
+                name.clone(),
+                relative,
                 enabled,
-                size_bytes: meta.len(),
-                project_type: db_hit
-                    .as_ref()
-                    .map(|e| e.project_type.clone())
-                    .unwrap_or_else(|| match folder {
-                        "mods" => "mod".into(),
-                        "resourcepacks" => "resourcepack".into(),
-                        "shaderpacks" => "shader".into(),
-                        "datapacks" => "datapack".into(),
-                        _ => "mod".into(),
-                    }),
-                project_id: db_hit.as_ref().and_then(|e| e.project_id.clone()),
-                version_id: db_hit.as_ref().and_then(|e| e.version_id.clone()),
-                version_number: db_hit.as_ref().and_then(|e| e.version_number.clone()),
-                version_name: db_hit.as_ref().and_then(|e| e.version_name.clone()),
-                project_title: db_hit.as_ref().and_then(|e| e.project_title.clone()),
-                project_icon_url: db_hit.as_ref().and_then(|e| e.project_icon_url.clone()),
-                author: db_hit.as_ref().and_then(|e| e.author.clone()),
-                author_avatar_url: db_hit.as_ref().and_then(|e| e.author_avatar_url.clone()),
-                author_id: db_hit.as_ref().and_then(|e| e.author_id.clone()),
-                author_type: db_hit.as_ref().and_then(|e| e.author_type.clone()),
-                update_version_id: db_hit.as_ref().and_then(|e| e.update_version_id.clone()),
-                has_update: db_hit
-                    .as_ref()
-                    .and_then(|e| e.update_version_id.as_ref())
-                    .is_some(),
-            });
+                meta.len(),
+                folder,
+                false,
+            ));
         }
     }
+    for (_, e) in by_path {
+        if !e.pending {
+            continue;
+        }
+        out.push(mod_file_from_entry(
+            Some(&e),
+            e.file_name.clone(),
+            e.relative_path.clone(),
+            true,
+            0,
+            "",
+            true,
+        ));
+    }
     out.sort_by(|a, b| {
-        a.project_title
-            .as_deref()
-            .unwrap_or(&a.name)
-            .to_lowercase()
-            .cmp(&b.project_title.as_deref().unwrap_or(&b.name).to_lowercase())
+        b.is_missing.cmp(&a.is_missing).then_with(|| {
+            a.project_title
+                .as_deref()
+                .unwrap_or(&a.name)
+                .to_lowercase()
+                .cmp(&b.project_title.as_deref().unwrap_or(&b.name).to_lowercase())
+        })
     });
     Ok(out)
+}
+
+fn mod_file_from_entry(
+    db_hit: Option<&db::ContentEntry>,
+    name: String,
+    relative: String,
+    enabled: bool,
+    size_bytes: u64,
+    folder: &str,
+    is_missing: bool,
+) -> ModFileDto {
+    ModFileDto {
+        name,
+        relative_path: relative,
+        enabled,
+        size_bytes,
+        project_type: db_hit
+            .map(|e| e.project_type.clone())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| match folder {
+                "mods" => "mod".into(),
+                "resourcepacks" => "resourcepack".into(),
+                "shaderpacks" => "shader".into(),
+                "datapacks" => "datapack".into(),
+                _ => db_hit
+                    .map(|e| e.project_type.clone())
+                    .unwrap_or_else(|| "mod".into()),
+            }),
+        project_id: db_hit.and_then(|e| e.project_id.clone()),
+        version_id: db_hit.and_then(|e| e.version_id.clone()),
+        version_number: db_hit.and_then(|e| e.version_number.clone()),
+        version_name: db_hit.and_then(|e| e.version_name.clone()),
+        project_title: db_hit.and_then(|e| e.project_title.clone()),
+        project_icon_url: db_hit.and_then(|e| e.project_icon_url.clone()),
+        author: db_hit.and_then(|e| e.author.clone()),
+        author_avatar_url: db_hit.and_then(|e| e.author_avatar_url.clone()),
+        author_id: db_hit.and_then(|e| e.author_id.clone()),
+        author_type: db_hit.and_then(|e| e.author_type.clone()),
+        update_version_id: db_hit.and_then(|e| e.update_version_id.clone()),
+        has_update: !is_missing
+            && db_hit
+                .and_then(|e| e.update_version_id.as_ref())
+                .is_some(),
+        is_missing,
+    }
 }
 
 /// Background sync: hash unmatched files, resolve Modrinth metadata/authors.
@@ -763,10 +803,6 @@ pub async fn remove_instance_mod(instance_id: String, relative_path: String) -> 
         .map_err(|e| e.to_string())?;
     let root = launcher::dirs::instance_dir(&resource, &instance.path);
     let path = root.join(&relative_path);
-    if !path.is_file() {
-        return Err(format!("文件不存在: {relative_path}"));
-    }
-    // Only allow deleting under known content folders.
     let normalized = relative_path.replace('\\', "/");
     let allowed = normalized.starts_with("mods/")
         || normalized.starts_with("resourcepacks/")
@@ -775,9 +811,21 @@ pub async fn remove_instance_mod(instance_id: String, relative_path: String) -> 
     if !allowed {
         return Err("只能删除实例内容目录下的文件".into());
     }
-    tokio::fs::remove_file(&path)
-        .await
-        .map_err(|e| e.to_string())?;
+    if path.is_file() {
+        tokio::fs::remove_file(&path)
+            .await
+            .map_err(|e| e.to_string())?;
+    } else {
+        let entries = db::list_content_for_instance(&state.pool, &instance_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let pending = entries.iter().any(|e| {
+            e.relative_path.replace('\\', "/") == normalized && e.pending
+        });
+        if !pending {
+            return Err(format!("文件不存在: {relative_path}"));
+        }
+    }
     let _ = db::remove_content_entry(&state.pool, &instance_id, &normalized).await;
     Ok(())
 }
@@ -1453,6 +1501,22 @@ pub async fn install_curseforge_file(
     )
     .await
     .map_err(|e| e.to_string())
+}
+
+pub async fn retry_missing_content(
+    instance_id: String,
+    relative_path: String,
+    on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
+) -> Result<String, String> {
+    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
+        let fut = on_progress(p, m);
+        tokio::spawn(async move {
+            fut.await;
+        });
+    });
+    launcher::content::retry_missing_content(&instance_id, &relative_path, Some(cb))
+        .await
+        .map_err(|e| format!("{e:#}"))
 }
 
 pub async fn install_mrpack(

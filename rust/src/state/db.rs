@@ -84,6 +84,8 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
 			sha1 TEXT,
 			size_bytes INTEGER,
 			added_at TEXT NOT NULL,
+			pending INTEGER NOT NULL DEFAULT 0,
+			download_url TEXT,
 			UNIQUE(instance_id, relative_path)
 		);
 
@@ -134,6 +136,8 @@ async fn migrate(pool: &SqlitePool) -> Result<()> {
     ensure_column(pool, "instance_content", "author_id", "TEXT").await?;
     ensure_column(pool, "instance_content", "author_type", "TEXT").await?;
     ensure_column(pool, "instance_content", "update_version_id", "TEXT").await?;
+    ensure_column(pool, "instance_content", "pending", "INTEGER NOT NULL DEFAULT 0").await?;
+    ensure_column(pool, "instance_content", "download_url", "TEXT").await?;
     ensure_column(pool, "accounts", "client_token", "TEXT").await?;
     ensure_column(pool, "accounts", "auth_server_id", "TEXT").await?;
     ensure_column(pool, "instances", "window_width", "INTEGER").await?;
@@ -1184,6 +1188,8 @@ pub struct ContentEntry {
     pub sha1: Option<String>,
     pub size_bytes: Option<i64>,
     pub added_at: String,
+    pub pending: bool,
+    pub download_url: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1208,6 +1214,8 @@ struct ContentRow {
     sha1: Option<String>,
     size_bytes: Option<i64>,
     added_at: String,
+    pending: i64,
+    download_url: Option<String>,
 }
 
 impl ContentRow {
@@ -1233,6 +1241,8 @@ impl ContentRow {
             sha1: self.sha1,
             size_bytes: self.size_bytes,
             added_at: self.added_at,
+            pending: self.pending != 0,
+            download_url: self.download_url,
         }
     }
 }
@@ -1244,8 +1254,9 @@ pub async fn upsert_content_entry(pool: &SqlitePool, entry: &ContentEntry) -> Re
 			id, instance_id, relative_path, file_name, project_type,
 			project_id, version_id, version_number, version_name,
 			project_title, project_icon_url, author, author_avatar_url,
-			author_id, author_type, update_version_id, enabled, sha1, size_bytes, added_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			author_id, author_type, update_version_id, enabled, sha1, size_bytes, added_at,
+			pending, download_url
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(instance_id, relative_path) DO UPDATE SET
 			file_name = excluded.file_name,
 			project_type = excluded.project_type,
@@ -1262,7 +1273,9 @@ pub async fn upsert_content_entry(pool: &SqlitePool, entry: &ContentEntry) -> Re
 			update_version_id = excluded.update_version_id,
 			enabled = excluded.enabled,
 			sha1 = COALESCE(excluded.sha1, instance_content.sha1),
-			size_bytes = COALESCE(excluded.size_bytes, instance_content.size_bytes)
+			size_bytes = COALESCE(excluded.size_bytes, instance_content.size_bytes),
+			pending = excluded.pending,
+			download_url = COALESCE(excluded.download_url, instance_content.download_url)
 		"#,
     )
     .bind(&entry.id)
@@ -1285,6 +1298,8 @@ pub async fn upsert_content_entry(pool: &SqlitePool, entry: &ContentEntry) -> Re
     .bind(&entry.sha1)
     .bind(entry.size_bytes)
     .bind(&entry.added_at)
+    .bind(if entry.pending { 1 } else { 0 })
+    .bind(&entry.download_url)
     .execute(pool)
     .await?;
     Ok(())

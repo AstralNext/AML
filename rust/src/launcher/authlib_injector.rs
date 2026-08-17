@@ -33,8 +33,7 @@ pub async fn ensure_authlib_injector(resource_dir: &str) -> Result<PathBuf> {
     }
 
     tokio::fs::create_dir_all(&directory).await?;
-    let client = reqwest::Client::builder()
-        .user_agent("AstralMinecraftLauncher/0.1")
+    let client = crate::config::reqwest_builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     let metadata = fetch_metadata(&client).await?;
@@ -84,9 +83,18 @@ async fn cached_jar_is_valid(directory: &std::path::Path, jar_path: &std::path::
 }
 
 async fn fetch_metadata(client: &reqwest::Client) -> Result<ArtifactMetadata> {
+    let settings = crate::config::cdn_settings();
+    let mut urls = vec![OFFICIAL_META_URL.to_string()];
+    if settings.bmclapi {
+        if settings.official_first {
+            urls.push(BMCLAPI_META_URL.to_string());
+        } else {
+            urls.insert(0, BMCLAPI_META_URL.to_string());
+        }
+    }
     let mut last_error = None;
-    for url in [OFFICIAL_META_URL, BMCLAPI_META_URL] {
-        match client.get(url).send().await {
+    for url in urls {
+        match client.get(&url).send().await {
             Ok(response) => match response.error_for_status() {
                 Ok(response) => match response.json::<ArtifactMetadata>().await {
                     Ok(metadata) => return Ok(metadata),

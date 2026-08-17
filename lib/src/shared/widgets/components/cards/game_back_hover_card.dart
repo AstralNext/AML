@@ -231,7 +231,10 @@ class _GameBackHoverCardState extends State<GameBackHoverCard>
                           defaultBackgroundColor: tokens.colorBrand,
                           defaultColor: tokens.colorOnBrand,
                           hoverTextColor: tokens.colorOnBrand,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           icon: widget.playLabel == '停止'
                               ? Icons.stop
                               : Icons.play_arrow,

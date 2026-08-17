@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Result};
 use flutter_rust_bridge::DartFnFuture;
-use futures::StreamExt;
 use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -139,7 +138,7 @@ pub fn extract_java_version(version: &str) -> Result<i32> {
 
 /// 获取可用的 Java 包信息
 async fn fetch_java_packages(java_version: i32) -> Result<Vec<JavaPackage>> {
-    let client = Client::builder().timeout(config::HTTP_TIMEOUT).build()?;
+    let client = crate::config::apply_proxy(Client::builder().timeout(config::HTTP_TIMEOUT)).build()?;
     let arch = get_system_arch();
     let os = get_system_os()?;
 
@@ -171,8 +170,7 @@ async fn download_file(
     url: &str,
     on_progress: Option<&Arc<impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync>>,
 ) -> Result<Vec<u8>> {
-    let client = Client::builder()
-        .timeout(config::DOWNLOAD_TIMEOUT)
+    let client = crate::config::apply_proxy(Client::builder().timeout(config::DOWNLOAD_TIMEOUT))
         .build()?;
 
     let mut last_err = None;
@@ -207,43 +205,44 @@ async fn download_file_once(
     url: &str,
     on_progress: Option<&Arc<impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync>>,
 ) -> Result<Vec<u8>> {
-    let response = client.get(url).send().await?;
-
-    if !response.status().is_success() {
-        return Err(anyhow!("下载失败: {}", response.status()));
-    }
-
-    let content_length = response.content_length().unwrap_or(0);
-    let mut bytes = Vec::new();
-    let mut downloaded_bytes = 0u64;
-
-    let mut stream = response.bytes_stream();
-
-    while let Some(chunk) = StreamExt::next(&mut stream).await {
-        let chunk = chunk?;
-        bytes.extend_from_slice(&chunk);
-        downloaded_bytes += chunk.len() as u64;
-
-        // 计算下载进度 (使用配置常量)
-        if let Some(callback) = on_progress {
-            if content_length > 0 {
-                let progress = downloaded_bytes as f64 / content_length as f64;
+    let progress = Arc::new(Mutex::new((0u64, None::<u64>)));
+    let on_bytes = {
+        let progress = progress.clone();
+        Arc::new(move |got: u64, total: Option<u64>| {
+            if let Ok(mut g) = progress.lock() {
+                *g = (got, total);
+            }
+        })
+    };
+    let mut download = std::pin::pin!(crate::launcher::download::fetch_bytes_with_timeout(
+        client,
+        url,
+        None,
+        Some(on_bytes),
+    ));
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
+    loop {
+        tokio::select! {
+            res = &mut download => return res,
+            _ = interval.tick() => {
+                let Some(callback) = on_progress else { continue };
+                let (got, total) = progress.lock().map(|g| *g).unwrap_or((0, None));
+                let Some(content_length) = total.filter(|n| *n > 0) else { continue };
+                let frac = got as f64 / content_length as f64;
                 let progress_range =
                     config::PROGRESS_DOWNLOAD_END - config::PROGRESS_DOWNLOAD_START;
                 let overall_progress =
-                    config::PROGRESS_DOWNLOAD_START + (progress * progress_range);
-                let mb_downloaded = downloaded_bytes as f64 / 1024.0 / 1024.0;
-                let mb_total = content_length as f64 / 1024.0 / 1024.0;
-                callback(
-                    overall_progress,
-                    format!("下载中... {:.1}MB / {:.1}MB", mb_downloaded, mb_total),
-                )
-                .await;
+                    config::PROGRESS_DOWNLOAD_START + (frac * progress_range);
+                let payload = serde_json::json!({
+                    "stage": "Downloading Java",
+                    "downloaded": got,
+                    "size": content_length,
+                    "sub": frac,
+                });
+                callback(overall_progress, format!("__TASK__{payload}")).await;
             }
         }
     }
-
-    Ok(bytes)
 }
 
 /// 解压ZIP文件

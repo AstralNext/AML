@@ -29,6 +29,32 @@ String humanizeProgressMessage(String raw) {
     return '下载超时或网络中断，请稍后重试（将自动尝试镜像回退）';
   }
 
+  if (lower.contains('pack files') || lower.contains('modpack files')) {
+    return '正在下载模组文件…';
+  }
+  if (lower.contains('downloading pack') || lower.contains('downloading java')) {
+    if (lower.contains('java')) return '正在下载 Java…';
+    return '正在下载整合包…';
+  }
+  if (lower.contains('installing modpack')) {
+    return '正在安装整合包…';
+  }
+  if (lower.contains('downloading client')) {
+    return '正在下载客户端…';
+  }
+  if (lower.contains('downloading libraries')) {
+    return '正在下载依赖库…';
+  }
+  if (lower.contains('downloading assets')) {
+    return '正在下载游戏资源…';
+  }
+  if (lower.contains('downloading log config')) {
+    return '正在下载日志配置…';
+  }
+  if (lower.contains('downloading minecraft files')) {
+    return '正在下载 Minecraft 文件…';
+  }
+
   final fetchingModrinth = RegExp(
     r'Fetching Modrinth version\s+(.+)',
     caseSensitive: false,

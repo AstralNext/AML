@@ -103,7 +103,7 @@ pub async fn finish_msa_login(
         anyhow::bail!("oauth state mismatch");
     }
 
-    let client = reqwest::Client::new();
+    let client = crate::config::reqwest_builder().build()?;
     let token_resp: OAuthToken = client
         .post("https://login.live.com/oauth20_token.srf")
         .form(&[
@@ -161,7 +161,7 @@ pub async fn refresh_active_msa_if_needed() -> Result<()> {
     let Some(refresh) = account.refresh_token.filter(|s| !s.is_empty()) else {
         return Ok(());
     };
-    let client = reqwest::Client::new();
+    let client = crate::config::reqwest_builder().build()?;
     let token_resp: OAuthToken = match client
         .post("https://login.live.com/oauth20_token.srf")
         .form(&[
@@ -440,8 +440,7 @@ pub fn normalize_yggdrasil_api_url(value: &str) -> Result<String> {
 }
 
 fn yggdrasil_client() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .user_agent("AstralMinecraftLauncher/0.1")
+    Ok(crate::config::reqwest_builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()?)
 }

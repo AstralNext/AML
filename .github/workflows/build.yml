@@ -91,13 +91,20 @@ jobs:
           raw=$(grep -E '^version:' pubspec.yaml | head -1 | awk '{print $2}' | tr -d '\r')
           # 0.0.1-beta+3 -> 0.0.1-beta-3
           safe=${raw//+/-}
+          # Inno Setup /DMyAppVersion cannot contain '+'
+          iss=${raw%%+*}
           echo "raw=$raw" >> "$GITHUB_OUTPUT"
           echo "safe=$safe" >> "$GITHUB_OUTPUT"
-          echo "Version: $raw ($safe)"
+          echo "iss=$iss" >> "$GITHUB_OUTPUT"
+          echo "Version: $raw ($safe, iss=$iss)"
 
       - name: Build Windows
         if: matrix.target == 'windows'
         run: flutter build windows --release
+
+      - name: Install Inno Setup
+        if: matrix.target == 'windows'
+        run: choco install innosetup -y --no-progress
 
       - name: Package Windows
         if: matrix.target == 'windows'
@@ -111,6 +118,16 @@ jobs:
           Compress-Archive -Path "dist\$out" -DestinationPath "dist\$out.zip" -Force
           Remove-Item "dist\$out" -Recurse -Force
           Get-Item "dist\$out.zip" | Format-List Name, Length
+
+          $iss = "${{ steps.ver.outputs.iss }}"
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found: $iscc" }
+          & $iscc "/DMyAppVersion=$iss" "$env:GITHUB_WORKSPACE\installer\aml.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = Join-Path $env:GITHUB_WORKSPACE "installer\Output\aml-$iss-windows-x64-setup.exe"
+          if (-not (Test-Path $setup)) { throw "Inno Setup output missing: $setup" }
+          Copy-Item $setup "dist\" -Force
+          Get-Item "dist\aml-$iss-windows-x64-setup.exe" | Format-List Name, Length
 
       - name: Build Linux
         if: matrix.target == 'linux'
@@ -149,6 +166,7 @@ jobs:
           path: |
             dist/*.zip
             dist/*.tar.gz
+            dist/*.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -168,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p upload
-          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp -v {} upload/ \;
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.exe' \) -exec cp -v {} upload/ \;
           ls -lh upload
           echo "count=$(find upload -type f | wc -l)" >> "$GITHUB_OUTPUT"
 

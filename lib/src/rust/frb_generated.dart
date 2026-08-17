@@ -284,6 +284,11 @@ abstract class RustLibApi extends BaseApi {
       String? javaPath,
       required FutureOr<void> Function(double, String) onProgress});
 
+  Future<String> crateApiLauncherRetryMissingContent(
+      {required String instanceId,
+      required String relativePath,
+      required FutureOr<void> Function(double, String) onProgress});
+
   Future<void> crateApiLauncherKillInstance({required String id});
 
   Future<ProcessDto> crateApiLauncherLaunchInstance(
@@ -1937,6 +1942,37 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "install_mrpack",
         argNames: ["instanceId", "mrpackPath", "javaPath", "onProgress"],
+      );
+
+  @override
+  Future<String> crateApiLauncherRetryMissingContent(
+      {required String instanceId,
+      required String relativePath,
+      required FutureOr<void> Function(double, String) onProgress}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_String(instanceId, serializer);
+        sse_encode_String(relativePath, serializer);
+        sse_encode_DartFn_Inputs_f_64_String_Output_unit_AnyhowException(
+            onProgress, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 96, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: sse_decode_String,
+      ),
+      constMeta: kCrateApiLauncherRetryMissingContentConstMeta,
+      argValues: [instanceId, relativePath, onProgress],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiLauncherRetryMissingContentConstMeta =>
+      const TaskConstMeta(
+        debugName: "retry_missing_content",
+        argNames: ["instanceId", "relativePath", "onProgress"],
       );
 
   @override
@@ -3982,8 +4018,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ModFileDto dco_decode_mod_file_dto(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 17)
-      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
+    if (arr.length != 18)
+      throw Exception('unexpected arr length: expect 18 but see ${arr.length}');
     return ModFileDto(
       name: dco_decode_String(arr[0]),
       relativePath: dco_decode_String(arr[1]),
@@ -4002,6 +4038,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       authorType: dco_decode_opt_String(arr[14]),
       updateVersionId: dco_decode_opt_String(arr[15]),
       hasUpdate: dco_decode_bool(arr[16]),
+      isMissing: dco_decode_bool(arr[17]),
     );
   }
 
@@ -5124,6 +5161,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_authorType = sse_decode_opt_String(deserializer);
     var var_updateVersionId = sse_decode_opt_String(deserializer);
     var var_hasUpdate = sse_decode_bool(deserializer);
+    var var_isMissing = sse_decode_bool(deserializer);
     return ModFileDto(
         name: var_name,
         relativePath: var_relativePath,
@@ -5141,7 +5179,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         authorId: var_authorId,
         authorType: var_authorType,
         updateVersionId: var_updateVersionId,
-        hasUpdate: var_hasUpdate);
+        hasUpdate: var_hasUpdate,
+        isMissing: var_isMissing);
   }
 
   @protected
@@ -6306,6 +6345,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.authorType, serializer);
     sse_encode_opt_String(self.updateVersionId, serializer);
     sse_encode_bool(self.hasUpdate, serializer);
+    sse_encode_bool(self.isMissing, serializer);
   }
 
   @protected

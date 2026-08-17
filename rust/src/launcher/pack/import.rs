@@ -3,7 +3,6 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Deserialize;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use zip::ZipArchive;
@@ -11,6 +10,7 @@ use zip::ZipArchive;
 use crate::launcher::dirs;
 use crate::launcher::download::{ProgressFn, PACK_DOWNLOAD_CONCURRENCY};
 use crate::launcher::install;
+use crate::launcher::progress;
 use crate::state::db;
 use crate::state::models::{CreateInstanceRequest, InstallStage, Instance, ModLoader};
 use crate::state::{resource_dir, try_state};
@@ -467,21 +467,21 @@ async fn install_from_cf_meta(
             resolved.push((f, name, url));
         }
 
-        let total = resolved.len().max(1) as f64;
+        let total = resolved.len() as u64;
         let sem = Arc::new(Semaphore::new(PACK_DOWNLOAD_CONCURRENCY));
-        let completed = Arc::new(AtomicUsize::new(0));
         let skipped = Arc::new(Mutex::new(Vec::<String>::new()));
         let mut futs = FuturesUnordered::new();
-        let on_progress_dl = on_progress.clone();
+        let batch = on_progress.clone().map(|cb| {
+            progress::BatchReporter::new(cb, "Downloading pack files", 0.12, 0.66, total.max(1))
+        });
         let pool = state.pool.clone();
         let instance_id = created.id.clone();
         let instance_dir_dl = instance_dir.clone();
 
         for (file, file_name, url) in resolved {
             let sem = sem.clone();
-            let completed = completed.clone();
             let skipped = skipped.clone();
-            let on_progress_dl = on_progress_dl.clone();
+            let batch = batch.clone();
             let pool = pool.clone();
             let instance_id = instance_id.clone();
             let instance_dir_dl = instance_dir_dl.clone();
@@ -490,70 +490,54 @@ async fn install_from_cf_meta(
                 let rel = content_relative_path(&file_name);
                 let dest = instance_dir_dl.join(&rel);
 
-                let tick = || {
-                    let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                    if let Some(cb) = &on_progress_dl {
-                        cb(
-                            0.12 + (n as f64 / total) * 0.50,
-                            format!("Downloading pack files {n}/{}", total as u64),
-                        );
-                    }
-                };
-
                 if crate::launcher::download::file_already_ok(&dest, None).await {
-                    tick();
+                    if let Some(b) = &batch {
+                        b.skip_file();
+                    }
                     return Ok::<(), anyhow::Error>(());
                 }
 
-                match download_cf_file(&url).await {
+                let on_bytes = batch.as_ref().map(|b| b.file_bytes_cb(&file_name));
+                match download_cf_file(&url, on_bytes).await {
                     Ok(bytes) => {
                         if let Some(parent) = dest.parent() {
                             tokio::fs::create_dir_all(parent).await?;
                         }
                         tokio::fs::write(&dest, &bytes).await?;
-                        if file.project_id > 0 {
-                            let now = chrono::Utc::now().to_rfc3339();
-                            let sha1 = crate::launcher::download::sha1_hex(&bytes);
-                            let project_type = if rel.starts_with("resourcepacks/") {
-                                "resourcepack"
-                            } else if rel.starts_with("shaderpacks/") {
-                                "shader"
-                            } else if rel.starts_with("datapacks/") {
-                                "datapack"
-                            } else {
-                                "mod"
-                            };
-                            let entry = db::ContentEntry {
-                                id: format!("content:{}", uuid::Uuid::new_v4()),
-                                instance_id,
-                                relative_path: rel.replace('\\', "/"),
-                                file_name: file_name.clone(),
-                                project_type: project_type.into(),
-                                project_id: Some(format!("cf:{}", file.project_id)),
-                                version_id: Some(file.file_id.to_string()),
-                                version_number: Some(file_name.clone()),
-                                version_name: Some(file_name.clone()),
-                                project_title: None,
-                                project_icon_url: None,
-                                author: None,
-                                author_avatar_url: None,
-                                author_id: None,
-                                author_type: None,
-                                update_version_id: None,
-                                enabled: true,
-                                sha1: Some(sha1),
-                                size_bytes: Some(bytes.len() as i64),
-                                added_at: now,
-                            };
-                            let _ = db::upsert_content_entry(&pool, &entry).await;
+                        let sha1 = crate::launcher::download::sha1_hex(&bytes);
+                        let entry = pack_file_content_entry(
+                            instance_id,
+                            &rel,
+                            &file_name,
+                            &file,
+                            Some(url),
+                            Some(sha1),
+                            Some(bytes.len() as i64),
+                            false,
+                        );
+                        let _ = db::upsert_content_entry(&pool, &entry).await;
+                        if let Some(b) = &batch {
+                            b.finish_file();
                         }
-                        tick();
                     }
                     Err(e) => {
                         let detail = format!("{e:#}");
                         eprintln!("[AML] Skipping missing pack file {file_name}: {detail}");
+                        let entry = pack_file_content_entry(
+                            instance_id,
+                            &rel,
+                            &file_name,
+                            &file,
+                            Some(url),
+                            None,
+                            None,
+                            true,
+                        );
+                        let _ = db::upsert_content_entry(&pool, &entry).await;
                         skipped.lock().await.push(file_name);
-                        tick();
+                        if let Some(b) = &batch {
+                            b.finish_file();
+                        }
                     }
                 }
                 Ok(())
@@ -606,7 +590,18 @@ async fn install_from_cf_meta(
         }
 
         report(0.78, "Installing Minecraft + loader…".into());
-        install::install_instance(&created.id, java_path, false, on_progress.clone()).await?;
+        install::install_instance(
+            &created.id,
+            java_path,
+            false,
+            progress::nest_progress(
+                on_progress.clone(),
+                0.78,
+                0.95,
+                "Installing Minecraft + loader",
+            ),
+        )
+        .await?;
 
         report(0.95, "Indexing installed content…".into());
         let _ = crate::launcher::content::sync_instance_content_metadata(&created.id, false).await;
@@ -857,7 +852,18 @@ async fn install_multimc_zip(
     extract_mmc_minecraft(data, &instance_dir, &meta.minecraft_prefix)?;
 
     report(0.78, "Installing Minecraft + loader…".into());
-    install::install_instance(&created.id, java_path, false, on_progress.clone()).await?;
+    install::install_instance(
+        &created.id,
+        java_path,
+        false,
+        progress::nest_progress(
+            on_progress.clone(),
+            0.78,
+            0.95,
+            "Installing Minecraft + loader",
+        ),
+    )
+    .await?;
     report(0.95, "Indexing installed content…".into());
     let _ = crate::launcher::content::sync_instance_content_metadata(&created.id, false).await;
     let _ = db::set_instance_modpack_link(
@@ -908,7 +914,18 @@ pub async fn create_instance_from_mmc_folder(
     report(0.20, "Copying instance files…".into());
     copy_dir_recursive(&minecraft_dir, &instance_dir).await?;
     report(0.78, "Installing Minecraft + loader…".into());
-    install::install_instance(&created.id, java_path, false, on_progress.clone()).await?;
+    install::install_instance(
+        &created.id,
+        java_path,
+        false,
+        progress::nest_progress(
+            on_progress.clone(),
+            0.78,
+            0.95,
+            "Installing Minecraft + loader",
+        ),
+    )
+    .await?;
     let _ = crate::launcher::content::sync_instance_content_metadata(&created.id, false).await;
     let _ = db::set_instance_modpack_link(
         &state.pool,
@@ -945,4 +962,50 @@ async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn pack_file_content_entry(
+    instance_id: String,
+    rel: &str,
+    file_name: &str,
+    file: &CfFileRef,
+    download_url: Option<String>,
+    sha1: Option<String>,
+    size_bytes: Option<i64>,
+    pending: bool,
+) -> db::ContentEntry {
+    let rel = rel.replace('\\', "/");
+    let project_type = if rel.starts_with("resourcepacks/") {
+        "resourcepack"
+    } else if rel.starts_with("shaderpacks/") {
+        "shader"
+    } else if rel.starts_with("datapacks/") {
+        "datapack"
+    } else {
+        "mod"
+    };
+    db::ContentEntry {
+        id: format!("content:{}", uuid::Uuid::new_v4()),
+        instance_id,
+        relative_path: rel,
+        file_name: file_name.to_string(),
+        project_type: project_type.into(),
+        project_id: (file.project_id > 0).then(|| format!("cf:{}", file.project_id)),
+        version_id: (file.file_id > 0).then(|| file.file_id.to_string()),
+        version_number: Some(file_name.to_string()),
+        version_name: Some(file_name.to_string()),
+        project_title: None,
+        project_icon_url: None,
+        author: None,
+        author_avatar_url: None,
+        author_id: None,
+        author_type: None,
+        update_version_id: None,
+        enabled: true,
+        sha1,
+        size_bytes,
+        added_at: chrono::Utc::now().to_rfc3339(),
+        pending,
+        download_url,
+    }
 }

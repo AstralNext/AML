@@ -100,7 +100,10 @@ class ProgressItemWidget extends StatelessWidget {
     final progressText = item.progressText.watch(context);
     final failed = item.failed.watch(context);
     final retryAttempt = item.retryAttempt.watch(context);
+    final subProgress = item.subProgress.watch(context);
+    final subText = item.subText.watch(context);
     final tokens = context.tokens;
+    final percent = (progress.clamp(0.0, 1.0) * 100).round();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -117,6 +120,15 @@ class ProgressItemWidget extends StatelessWidget {
                 ),
               ),
             ),
+            if (!failed)
+              Text(
+                '$percent%',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: tokens.colorBase.withValues(alpha: 0.7),
+                ),
+              ),
             if (failed)
               IconButton(
                 tooltip: '关闭',
@@ -159,6 +171,34 @@ class ProgressItemWidget extends StatelessWidget {
                 : tokens.colorBase.withValues(alpha: 0.8),
           ),
         ),
+        if (!failed && (subText.isNotEmpty || subProgress != null)) ...[
+          const SizedBox(height: 8),
+          if (subText.isNotEmpty)
+            Text(
+              subText,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.3,
+                color: tokens.colorBase.withValues(alpha: 0.7),
+              ),
+            ),
+          if (subProgress != null) ...[
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: subProgress.clamp(0.0, 1.0),
+                minHeight: 4,
+                backgroundColor: tokens.colorButtonBorder.withValues(alpha: 0.4),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  tokens.colorBrand.withValues(alpha: 0.75),
+                ),
+              ),
+            ),
+          ],
+        ],
         if (failed && item.onRetry != null) ...[
           const SizedBox(height: 10),
           Align(

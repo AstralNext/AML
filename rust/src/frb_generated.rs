@@ -2042,6 +2042,51 @@ fn wire__crate__api__launcher__install_mrpack_impl(
         },
     )
 }
+fn wire__crate__api__launcher__retry_missing_content_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "retry_missing_content",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_instance_id = <String>::sse_decode(&mut deserializer);
+            let api_relative_path = <String>::sse_decode(&mut deserializer);
+            let api_on_progress = decode_DartFn_Inputs_f_64_String_Output_unit_AnyhowException(
+                <flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer),
+            );
+            deserializer.end();
+            move |context| async move {
+                transform_result_sse::<_, String>(
+                    (move || async move {
+                        let output_ok = crate::api::launcher::retry_missing_content(
+                            api_instance_id,
+                            api_relative_path,
+                            api_on_progress,
+                        )
+                        .await?;
+                        Ok(output_ok)
+                    })()
+                    .await,
+                )
+            }
+        },
+    )
+}
 fn wire__crate__api__launcher__kill_instance_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -4712,6 +4757,7 @@ impl SseDecode for crate::api::launcher::ModFileDto {
         let mut var_authorType = <Option<String>>::sse_decode(deserializer);
         let mut var_updateVersionId = <Option<String>>::sse_decode(deserializer);
         let mut var_hasUpdate = <bool>::sse_decode(deserializer);
+        let mut var_isMissing = <bool>::sse_decode(deserializer);
         return crate::api::launcher::ModFileDto {
             name: var_name,
             relative_path: var_relativePath,
@@ -4730,6 +4776,7 @@ impl SseDecode for crate::api::launcher::ModFileDto {
             author_type: var_authorType,
             update_version_id: var_updateVersionId,
             has_update: var_hasUpdate,
+            is_missing: var_isMissing,
         };
     }
 }
@@ -5756,6 +5803,12 @@ fn pde_ffi_dispatcher_primary_impl(
         95 => {
             wire__crate__api__launcher__watch_process_events_impl(port, ptr, rust_vec_len, data_len)
         }
+        96 => wire__crate__api__launcher__retry_missing_content_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
         _ => unreachable!(),
     }
 }
@@ -6053,6 +6106,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::launcher::ModFileDto {
             self.author_type.into_into_dart().into_dart(),
             self.update_version_id.into_into_dart().into_dart(),
             self.has_update.into_into_dart().into_dart(),
+            self.is_missing.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -7121,6 +7175,7 @@ impl SseEncode for crate::api::launcher::ModFileDto {
         <Option<String>>::sse_encode(self.author_type, serializer);
         <Option<String>>::sse_encode(self.update_version_id, serializer);
         <bool>::sse_encode(self.has_update, serializer);
+        <bool>::sse_encode(self.is_missing, serializer);
     }
 }
 

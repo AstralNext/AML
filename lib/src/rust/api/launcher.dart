@@ -403,6 +403,15 @@ Future<String> installCurseforgeFile(
         projectType: projectType,
         onProgress: onProgress);
 
+Future<String> retryMissingContent(
+        {required String instanceId,
+        required String relativePath,
+        required FutureOr<void> Function(double, String) onProgress}) =>
+    RustLib.instance.api.crateApiLauncherRetryMissingContent(
+        instanceId: instanceId,
+        relativePath: relativePath,
+        onProgress: onProgress);
+
 Future<void> installMrpack(
         {required String instanceId,
         required String mrpackPath,
@@ -970,6 +979,7 @@ class ModFileDto {
   final String? authorType;
   final String? updateVersionId;
   final bool hasUpdate;
+  final bool isMissing;
 
   const ModFileDto({
     required this.name,
@@ -989,6 +999,7 @@ class ModFileDto {
     this.authorType,
     this.updateVersionId,
     required this.hasUpdate,
+    required this.isMissing,
   });
 
   @override
@@ -1009,7 +1020,8 @@ class ModFileDto {
       authorId.hashCode ^
       authorType.hashCode ^
       updateVersionId.hashCode ^
-      hasUpdate.hashCode;
+      hasUpdate.hashCode ^
+      isMissing.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -1032,7 +1044,8 @@ class ModFileDto {
           authorId == other.authorId &&
           authorType == other.authorType &&
           updateVersionId == other.updateVersionId &&
-          hasUpdate == other.hasUpdate;
+          hasUpdate == other.hasUpdate &&
+          isMissing == other.isMissing;
 }
 
 class ModelElementDto {

@@ -1,5 +1,7 @@
 import 'package:aml/src/features/settings/data/repositories/ui_settings_repository.dart';
 import 'package:aml/src/features/settings/domain/models/ui_settings.dart';
+import 'package:aml/src/features/settings/application/cdn_runtime.dart';
+import 'package:aml/src/features/settings/application/proxy_runtime.dart';
 import 'package:aml/src/shared/theme/color_schemes.dart';
 import 'package:flutter/foundation.dart';
 import 'package:signals_flutter/signals_flutter.dart';
@@ -19,6 +21,12 @@ class UiSettingsState {
   final libraryGroupBy = signal('none');
   final libraryTab = signal('all');
   final libraryCollapsedGroups = signal<List<String>>(const []);
+  final cdnOfficialFirst = signal(false);
+  final cdnMcim = signal(true);
+  final cdnPysio = signal(true);
+  final cdnBmclapi = signal(true);
+  final proxyMode = signal('off');
+  final proxyUrl = signal('');
 
   final UiSettingsRepository _repository;
   bool _initialized = false;
@@ -38,6 +46,8 @@ class UiSettingsState {
 
     _hydrating = false;
     _initialized = true;
+    unawaited(CdnRuntime.syncToResourceDir(settings));
+    unawaited(ProxyRuntime.syncToResourceDir(settings));
 
     _disposeEffect = effect(() {
       if (_hydrating) return;
@@ -53,8 +63,17 @@ class UiSettingsState {
         libraryGroupBy.value,
         libraryTab.value,
         libraryCollapsedGroups.value,
+        cdnOfficialFirst.value,
+        cdnMcim.value,
+        cdnPysio.value,
+        cdnBmclapi.value,
+        proxyMode.value,
+        proxyUrl.value,
       );
-      _scheduleSave(_snapshotSettings());
+      final settings = _snapshotSettings();
+      CdnRuntime.apply(settings);
+      ProxyRuntime.apply(settings);
+      _scheduleSave(settings);
     });
   }
 
@@ -71,6 +90,14 @@ class UiSettingsState {
     libraryTab.value = settings.libraryTab;
     libraryCollapsedGroups.value =
         List<String>.from(settings.libraryCollapsedGroups);
+    cdnOfficialFirst.value = settings.cdnOfficialFirst;
+    cdnMcim.value = settings.cdnMcim;
+    cdnPysio.value = settings.cdnPysio;
+    cdnBmclapi.value = settings.cdnBmclapi;
+    proxyMode.value = settings.proxyMode;
+    proxyUrl.value = settings.proxyUrl;
+    CdnRuntime.apply(settings);
+    ProxyRuntime.apply(settings);
   }
 
   UiSettings _snapshotSettings() {
@@ -86,6 +113,12 @@ class UiSettingsState {
       libraryGroupBy: libraryGroupBy.value,
       libraryTab: libraryTab.value,
       libraryCollapsedGroups: List<String>.from(libraryCollapsedGroups.value),
+      cdnOfficialFirst: cdnOfficialFirst.value,
+      cdnMcim: cdnMcim.value,
+      cdnPysio: cdnPysio.value,
+      cdnBmclapi: cdnBmclapi.value,
+      proxyMode: proxyMode.value,
+      proxyUrl: proxyUrl.value,
     );
   }
 
@@ -152,6 +185,40 @@ class UiSettingsState {
     libraryCollapsedGroups.value = next;
   }
 
+  void setCdnOfficialFirst(bool value) {
+    if (cdnOfficialFirst.value == value) return;
+    cdnOfficialFirst.value = value;
+  }
+
+  void setCdnMcim(bool value) {
+    if (cdnMcim.value == value) return;
+    cdnMcim.value = value;
+  }
+
+  void setCdnPysio(bool value) {
+    if (cdnPysio.value == value) return;
+    cdnPysio.value = value;
+  }
+
+  void setCdnBmclapi(bool value) {
+    if (cdnBmclapi.value == value) return;
+    cdnBmclapi.value = value;
+  }
+
+  void setProxyMode(String value) {
+    final next = switch (value) {
+      'off' || 'manual' || 'system' => value,
+      _ => 'off',
+    };
+    if (proxyMode.value == next) return;
+    proxyMode.value = next;
+  }
+
+  void setProxyUrl(String value) {
+    if (proxyUrl.value == value) return;
+    proxyUrl.value = value;
+  }
+
   void addCloseToTrayListener(void Function(bool) listener) {
     _closeToTrayListeners.add(listener);
   }
@@ -165,6 +232,10 @@ class UiSettingsState {
     _saveDebounce = Timer(const Duration(milliseconds: 300), () async {
       try {
         await _repository.save(settings);
+        CdnRuntime.apply(settings);
+        ProxyRuntime.apply(settings);
+        await CdnRuntime.syncToResourceDir(settings);
+        await ProxyRuntime.syncToResourceDir(settings);
       } catch (e) {
         debugPrint('保存 UI 设置失败: $e');
       }

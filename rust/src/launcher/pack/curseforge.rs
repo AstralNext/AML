@@ -232,7 +232,10 @@ pub async fn resolve_file_downloads(files: &[CfFileRef]) -> Result<Vec<(CfFileRe
     Ok(resolved)
 }
 
-pub async fn download_cf_file(url: &str) -> Result<bytes::Bytes> {
+pub async fn download_cf_file(
+    url: &str,
+    on_bytes: Option<crate::launcher::progress::BytesProgressFn>,
+) -> Result<bytes::Bytes> {
     let client = super::super::manifest::http_client()?;
     let key = curseforge_api_key();
     let headers = [("x-api-key", key.as_str()), ("Accept", "*/*")];
@@ -240,6 +243,7 @@ pub async fn download_cf_file(url: &str) -> Result<bytes::Bytes> {
         &client,
         url,
         Some(&headers),
+        on_bytes,
     )
     .await?;
     Ok(bytes::Bytes::from(bytes))

@@ -13,6 +13,7 @@ use crate::state::{resource_dir, try_state};
 use super::dirs;
 use super::download::{self, ProgressFn};
 use super::manifest;
+use super::progress;
 
 pub async fn install_instance(
     instance_id: &str,
@@ -79,7 +80,12 @@ pub async fn install_instance(
         &info,
         &version_jar_id,
         java_arch,
-        on_progress.clone(),
+        progress::nest_progress(
+            on_progress.clone(),
+            0.08,
+            0.92,
+            "Downloading Minecraft files",
+        ),
     )
     .await?;
 

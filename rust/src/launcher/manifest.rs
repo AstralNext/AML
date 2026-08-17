@@ -3,7 +3,7 @@ use once_cell::sync::Lazy;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::config::META_URL;
@@ -18,14 +18,8 @@ use super::dirs;
 
 const MANIFEST_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
-    Client::builder()
-        .user_agent("AstralMinecraftLauncher/0.1")
-        .gzip(true)
-        .connect_timeout(super::download::CONNECT_TIMEOUT)
-        .timeout(super::download::REQUEST_OVERALL_TIMEOUT)
-        .build()
-        .expect("build HTTP client")
+static HTTP_CLIENT: Lazy<Mutex<(String, Client)>> = Lazy::new(|| {
+    Mutex::new((String::new(), build_http_client()))
 });
 static MINECRAFT_MANIFEST_CACHE: Lazy<RwLock<HashMap<PathBuf, (Instant, VersionManifest)>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
@@ -34,8 +28,28 @@ static LOADER_MANIFEST_CACHE: Lazy<RwLock<HashMap<PathBuf, (Instant, LoaderManif
 static VERSION_INFO_CACHE: Lazy<RwLock<HashMap<PathBuf, VersionInfo>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+fn build_http_client() -> Client {
+    crate::config::apply_proxy(
+        Client::builder()
+            .user_agent("AstralMinecraftLauncher/0.1")
+            .gzip(true)
+            .connect_timeout(super::download::CONNECT_TIMEOUT)
+            .timeout(super::download::REQUEST_OVERALL_TIMEOUT),
+    )
+    .build()
+    .expect("build HTTP client")
+}
+
 pub fn http_client() -> Result<Client> {
-    Ok(HTTP_CLIENT.clone())
+    let key = crate::config::proxy_fingerprint();
+    let mut guard = HTTP_CLIENT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if guard.0 != key {
+        guard.1 = build_http_client();
+        guard.0 = key;
+    }
+    Ok(guard.1.clone())
 }
 
 pub async fn fetch_minecraft_manifest(resource_dir: &str) -> Result<VersionManifest> {

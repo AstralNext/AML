@@ -783,11 +783,13 @@ class _DiscoverPageState extends State<DiscoverPage> {
                           }
 
                           return ListView.builder(
+                            addSemanticIndexes: false,
                             itemCount: projects.length,
                             itemBuilder: (context, index) {
                               final project = projects[index];
                               final state = _installState(project);
                               return Padding(
+                                key: ValueKey(project.id),
                                 padding: const EdgeInsets.only(bottom: 12),
                                 child: AppCard(
                                   title: project.title,

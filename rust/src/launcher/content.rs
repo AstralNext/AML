@@ -21,6 +21,7 @@ use super::dirs;
 use super::download::{self, ProgressFn, PACK_DOWNLOAD_CONCURRENCY};
 use super::install;
 use super::mcim_fallback;
+use super::progress;
 
 const QUILT_FABRIC_API_EXCEPTION: &str = "P7dR8mSH";
 
@@ -207,13 +208,14 @@ pub async fn install_modrinth_version(
     let content_type = ContentType::parse(project_type);
     let project = fetch_project_info(&client, &version.project_id).await.ok();
 
-    // Skip re-download when this exact version is already installed.
+    // Skip re-download when this exact version is already installed on disk.
     let existing =
         db::list_content_by_project(&state.pool, instance_id, &version.project_id).await?;
-    if let Some(hit) = existing
-        .iter()
-        .find(|e| e.version_id.as_deref() == Some(version_id))
-    {
+    if let Some(hit) = existing.iter().find(|e| {
+        e.version_id.as_deref() == Some(version_id)
+            && !e.pending
+            && instance_dir.join(&e.relative_path).is_file()
+    }) {
         report(
             1.0,
             format!(
@@ -525,11 +527,14 @@ pub async fn sync_instance_content_metadata(instance_id: &str, check_updates: bo
             sha1: None,
             size_bytes: Some(local.size as i64),
             added_at: chrono::Utc::now().to_rfc3339(),
+            pending: false,
+            download_url: None,
         });
 
         entry.relative_path = local.relative.clone();
         entry.file_name = local.file_name.clone();
         entry.enabled = local.enabled;
+        entry.pending = false;
         if entry.project_type.is_empty() {
             entry.project_type = local.project_type.clone();
         }
@@ -555,12 +560,13 @@ pub async fn sync_instance_content_metadata(instance_id: &str, check_updates: bo
     }
 
     // Drop DB rows for files no longer on disk (prevents stale update badges /
-    // ghost entries when install races with sync).
+    // ghost entries when install races with sync). Keep pending placeholders
+    // so missing pack files remain visible until downloaded or removed.
     let live: HashSet<String> = locals.iter().map(|l| l.relative.clone()).collect();
     let orphans: Vec<String> = by_path
-        .keys()
-        .filter(|p| !live.contains(*p))
-        .cloned()
+        .iter()
+        .filter(|(p, e)| !live.contains(*p) && !e.pending)
+        .map(|(p, _)| p.clone())
         .collect();
     for path in orphans {
         by_path.remove(&path);
@@ -922,6 +928,8 @@ async fn install_version_file(
         sha1: Some(sha1),
         size_bytes: Some(bytes.len() as i64),
         added_at: now,
+        pending: false,
+        download_url: None,
     };
     db::upsert_content_entry(pool, &entry).await?;
     Ok(dest)
@@ -1088,60 +1096,87 @@ pub async fn install_mrpack(
                 .unwrap_or(true)
         })
         .collect();
-    let total = files.len().max(1) as f64;
+    let file_count = files.len() as u64;
     let sem = Arc::new(Semaphore::new(PACK_DOWNLOAD_CONCURRENCY));
-    let completed = Arc::new(AtomicUsize::new(0));
     let skipped = Arc::new(AtomicUsize::new(0));
     let mut futs = FuturesUnordered::new();
-    let on_progress_dl = on_progress.clone();
+    let batch = on_progress.clone().map(|cb| {
+        progress::BatchReporter::new(
+            cb,
+            "Downloading pack files",
+            0.12,
+            0.70,
+            file_count.max(1),
+        )
+    });
+
+    let pool = state.pool.clone();
+    let instance_id_owned = instance_id.to_string();
 
     for file in files {
         let client = client.clone();
         let sem = sem.clone();
-        let completed = completed.clone();
         let skipped = skipped.clone();
-        let on_progress_dl = on_progress_dl.clone();
+        let batch = batch.clone();
         let instance_dir = instance_dir.clone();
+        let pool = pool.clone();
+        let instance_id = instance_id_owned.clone();
         futs.push(async move {
             let _permit = sem.acquire().await.ok();
             let dest = instance_dir.join(&file.path);
-            let expected = file.hashes.as_ref().and_then(|h| h.sha1.as_deref());
+            let expected = file.hashes.as_ref().and_then(|h| h.sha1.clone());
+            let file_name = Path::new(&file.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| file.path.clone());
 
-            let tick = |skipped_file: bool| {
-                let n = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                if skipped_file {
-                    skipped.fetch_add(1, Ordering::Relaxed);
+            if download::file_already_ok(&dest, expected.as_deref()).await {
+                if let Some(b) = &batch {
+                    b.skip_file();
                 }
-                if let Some(cb) = &on_progress_dl {
-                    cb(
-                        0.12 + (n as f64 / total) * 0.55,
-                        format!("Downloading pack files {n}/{}", total as u64),
-                    );
-                }
-            };
-
-            if download::file_already_ok(&dest, expected).await {
-                tick(false);
                 return Ok::<(), anyhow::Error>(());
             }
 
-            let bytes = match download_with_mirrors(&client, &file.downloads).await {
+            let on_bytes = batch.as_ref().map(|b| b.file_bytes_cb(&file_name));
+            let bytes = match download_with_mirrors(&client, &file.downloads, on_bytes).await {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!("[AML] Skipping missing mrpack file {}: {e:#}", file.path);
-                    tick(true);
+                    let entry = mrpack_file_content_entry(
+                        &instance_id,
+                        &file,
+                        true,
+                        expected,
+                        None,
+                    );
+                    let _ = db::upsert_content_entry(&pool, &entry).await;
+                    skipped.fetch_add(1, Ordering::Relaxed);
+                    if let Some(b) = &batch {
+                        b.finish_file();
+                    }
                     return Ok(());
                 }
             };
 
-            if let Some(expected) = expected {
+            if let Some(expected_hash) = expected.as_deref() {
                 let actual = super::download::sha1_hex(&bytes);
-                if !actual.eq_ignore_ascii_case(expected) {
+                if !actual.eq_ignore_ascii_case(expected_hash) {
                     eprintln!(
-                        "[AML] Skipping hash-mismatch mrpack file {}: expected {expected}, got {actual}",
+                        "[AML] Skipping hash-mismatch mrpack file {}: expected {expected_hash}, got {actual}",
                         file.path
                     );
-                    tick(true);
+                    let entry = mrpack_file_content_entry(
+                        &instance_id,
+                        &file,
+                        true,
+                        expected,
+                        None,
+                    );
+                    let _ = db::upsert_content_entry(&pool, &entry).await;
+                    skipped.fetch_add(1, Ordering::Relaxed);
+                    if let Some(b) = &batch {
+                        b.finish_file();
+                    }
                     return Ok(());
                 }
             }
@@ -1150,7 +1185,9 @@ pub async fn install_mrpack(
                 tokio::fs::create_dir_all(parent).await?;
             }
             tokio::fs::write(&dest, &bytes).await?;
-            tick(false);
+            if let Some(b) = &batch {
+                b.finish_file();
+            }
             Ok(())
         });
     }
@@ -1186,7 +1223,18 @@ pub async fn install_mrpack(
 
     // Install Minecraft + mod loader after pack files and overrides.
     report(0.78, "Installing Minecraft + loader?".into());
-    install::install_instance(instance_id, java_path, false, on_progress.clone()).await?;
+    install::install_instance(
+        instance_id,
+        java_path,
+        false,
+        progress::nest_progress(
+            on_progress.clone(),
+            0.78,
+            0.95,
+            "Installing Minecraft + loader",
+        ),
+    )
+    .await?;
 
     report(0.95, "Indexing installed content?".into());
     let _ = sync_instance_content_metadata(instance_id, false).await;
@@ -1213,6 +1261,7 @@ pub async fn install_mrpack(
 async fn download_with_mirrors(
     client: &reqwest::Client,
     urls: &[String],
+    on_bytes: Option<progress::BytesProgressFn>,
 ) -> Result<bytes::Bytes> {
     let mut expanded = Vec::new();
     for url in urls {
@@ -1227,12 +1276,168 @@ async fn download_with_mirrors(
     }
     let mut last_err = anyhow!("no download urls");
     for url in &expanded {
-        match download::download_checked_with_retry(client, url, None, None).await {
+        match download::download_checked_with_retry(client, url, None, None, on_bytes.clone()).await
+        {
             Ok(b) => return Ok(bytes::Bytes::from(b)),
             Err(e) => last_err = e,
         }
     }
     Err(last_err)
+}
+
+fn project_type_from_rel(rel: &str) -> String {
+    let rel = rel.replace('\\', "/").to_lowercase();
+    if rel.starts_with("resourcepacks/") {
+        "resourcepack".into()
+    } else if rel.starts_with("shaderpacks/") {
+        "shader".into()
+    } else if rel.starts_with("datapacks/") {
+        "datapack".into()
+    } else {
+        "mod".into()
+    }
+}
+
+fn mrpack_file_content_entry(
+    instance_id: &str,
+    file: &MrpackFile,
+    pending: bool,
+    sha1: Option<String>,
+    size_bytes: Option<i64>,
+) -> db::ContentEntry {
+    let rel = file.path.replace('\\', "/");
+    let file_name = Path::new(&rel)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| rel.clone());
+    db::ContentEntry {
+        id: format!("content:{}", uuid::Uuid::new_v4()),
+        instance_id: instance_id.to_string(),
+        relative_path: rel,
+        file_name: file_name.clone(),
+        project_type: project_type_from_rel(&file.path),
+        project_id: None,
+        version_id: None,
+        version_number: Some(file_name.clone()),
+        version_name: Some(file_name),
+        project_title: None,
+        project_icon_url: None,
+        author: None,
+        author_avatar_url: None,
+        author_id: None,
+        author_type: None,
+        update_version_id: None,
+        enabled: true,
+        sha1,
+        size_bytes,
+        added_at: chrono::Utc::now().to_rfc3339(),
+        pending,
+        download_url: file.downloads.first().cloned(),
+    }
+}
+
+/// Re-download a pack file that was skipped during install.
+pub async fn retry_missing_content(
+    instance_id: &str,
+    relative_path: &str,
+    on_progress: Option<ProgressFn>,
+) -> Result<String> {
+    let state = try_state()?;
+    let resource = resource_dir().await?;
+    let instance = db::get_instance(&state.pool, instance_id).await?;
+    let instance_dir = dirs::ensure_instance_dir(&resource, &instance.path).await?;
+    let rel = relative_path.replace('\\', "/");
+    let entries = db::list_content_for_instance(&state.pool, instance_id).await?;
+    let mut entry = entries
+        .into_iter()
+        .find(|e| e.relative_path.replace('\\', "/") == rel)
+        .ok_or_else(|| anyhow!("未找到待下载内容: {relative_path}"))?;
+
+    let report = |p: f64, msg: String| {
+        if let Some(cb) = &on_progress {
+            cb(p, msg);
+        }
+    };
+
+    let dest = instance_dir.join(&entry.relative_path);
+    if dest.is_file() {
+        entry.pending = false;
+        db::upsert_content_entry(&state.pool, &entry).await?;
+        return Ok(dest.to_string_lossy().into());
+    }
+
+    if let Some(url) = entry
+        .download_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
+        report(0.1, format!("Downloading {}?", entry.file_name));
+        let client = super::manifest::http_client()?;
+        let on_bytes = on_progress.clone().map(|cb| {
+            progress::file_bytes_cb(cb, "Downloading", entry.file_name.clone(), 0.1, 0.95)
+        });
+        let bytes = download_with_mirrors(&client, &[url.to_string()], on_bytes).await?;
+        if let Some(expected) = entry.sha1.as_deref().filter(|s| !s.is_empty()) {
+            let actual = download::sha1_hex(&bytes);
+            if !actual.eq_ignore_ascii_case(expected) {
+                anyhow::bail!(
+                    "sha1 mismatch for {}: expected {expected}, got {actual}",
+                    entry.file_name
+                );
+            }
+        }
+        if let Some(parent) = dest.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(&dest, &bytes).await?;
+        entry.pending = false;
+        entry.enabled = true;
+        entry.sha1 = Some(download::sha1_hex(&bytes));
+        entry.size_bytes = Some(bytes.len() as i64);
+        db::upsert_content_entry(&state.pool, &entry).await?;
+        report(1.0, format!("Installed {}", entry.file_name));
+        return Ok(dest.to_string_lossy().into());
+    }
+
+    if let Some(pid) = entry.project_id.as_deref() {
+        if let Some(mod_id_s) = pid.strip_prefix("cf:") {
+            let mod_id: u64 = mod_id_s
+                .parse()
+                .with_context(|| format!("无效的 CurseForge 项目 ID: {pid}"))?;
+            let file_id: u64 = entry
+                .version_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("缺少 CurseForge 文件 ID"))?
+                .parse()
+                .context("无效的 CurseForge 文件 ID")?;
+            return install_curseforge_file(
+                instance_id,
+                mod_id,
+                file_id,
+                Some(&entry.project_type),
+                on_progress,
+            )
+            .await;
+        }
+        if let Some(vid) = entry
+            .version_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return install_modrinth_version(
+                instance_id,
+                vid,
+                Some(&entry.project_type),
+                false,
+                on_progress,
+            )
+            .await;
+        }
+    }
+
+    anyhow::bail!("没有可用的下载地址: {}", entry.file_name)
 }
 
 /// Installing a modpack creates a **new** instance, or resumes an existing one.
@@ -1288,14 +1493,15 @@ pub async fn create_instance_from_modrinth_modpack(
         tokio::fs::read(&mrpack_path).await?
     } else {
         report(0.08, format!("Downloading {}?", file.filename));
-        let on_retry = |attempt: u32, max: u32| {
-            report(0.08, format!("Retrying download ({attempt}/{max})?"));
-        };
-        let bytes = download::download_checked_with_mcim_fallback(
+        let on_bytes = on_progress.clone().map(|cb| {
+            progress::file_bytes_cb(cb, "Downloading pack", file.filename.clone(), 0.05, 0.28)
+        });
+        let bytes = download::download_checked_with_mcim_fallback_bytes(
             &client,
             &file.url,
             None,
-            Some(&on_retry),
+            None,
+            on_bytes,
         )
         .await?;
         tokio::fs::write(&mrpack_path, &bytes).await?;
@@ -1375,7 +1581,7 @@ pub async fn create_instance_from_modrinth_modpack(
         &created.id,
         &mrpack_path.to_string_lossy(),
         java_path,
-        on_progress,
+        progress::nest_progress(on_progress, 0.30, 1.0, "Installing modpack"),
     )
     .await;
 
@@ -1468,14 +1674,15 @@ pub async fn reinstall_or_switch_modpack(
     if download::file_already_ok(&mrpack_path, None).await {
         report(0.08, format!("Using cached {}?", file.filename));
     } else {
-        let on_retry = |attempt: u32, max: u32| {
-            report(0.08, format!("Retrying download ({attempt}/{max})?"));
-        };
-        let bytes = download::download_checked_with_mcim_fallback(
+        let on_bytes = on_progress.clone().map(|cb| {
+            progress::file_bytes_cb(cb, "Downloading pack", file.filename.clone(), 0.05, 0.28)
+        });
+        let bytes = download::download_checked_with_mcim_fallback_bytes(
             &client,
             &file.url,
             None,
-            Some(&on_retry),
+            None,
+            on_bytes,
         )
         .await?;
         tokio::fs::write(&mrpack_path, &bytes).await?;
@@ -1486,7 +1693,7 @@ pub async fn reinstall_or_switch_modpack(
         instance_id,
         &mrpack_path.to_string_lossy(),
         java_path,
-        on_progress,
+        progress::nest_progress(on_progress, 0.30, 1.0, "Installing modpack"),
     )
     .await;
     if let Err(e) = install_result {
@@ -1611,12 +1818,13 @@ pub async fn install_curseforge_file(
         }
     };
 
-    // Skip when this exact CF file is already tracked for the project.
+    // Skip when this exact CF file is already on disk for the project.
     let existing = db::list_content_by_project(&state.pool, instance_id, &project_key).await?;
-    if let Some(hit) = existing
-        .iter()
-        .find(|e| e.version_id.as_deref() == Some(version_key.as_str()))
-    {
+    if let Some(hit) = existing.iter().find(|e| {
+        e.version_id.as_deref() == Some(version_key.as_str())
+            && !e.pending
+            && instance_dir.join(&e.relative_path).is_file()
+    }) {
         report(
             1.0,
             format!("Already installed ({})", hit.relative_path),
@@ -1660,7 +1868,10 @@ pub async fn install_curseforge_file(
         });
 
     report(0.2, format!("Downloading {}?", file.file_name));
-    let bytes = super::pack::download_cf_file(&download_url).await?;
+    let on_bytes = on_progress.clone().map(|cb| {
+        progress::file_bytes_cb(cb, "Downloading", file.file_name.clone(), 0.2, 0.9)
+    });
+    let bytes = super::pack::download_cf_file(&download_url, on_bytes).await?;
     let sha1 = super::download::sha1_hex(&bytes);
 
     // Replace older versions of the same CF project.
@@ -1725,6 +1936,8 @@ pub async fn install_curseforge_file(
         sha1: Some(sha1),
         size_bytes: Some(bytes.len() as i64),
         added_at: now,
+        pending: false,
+        download_url: None,
     };
     db::upsert_content_entry(&state.pool, &entry).await?;
     report(1.0, format!("Installed {}", file.file_name));
@@ -1797,7 +2010,10 @@ pub async fn create_instance_from_curseforge_modpack(
         report(0.15, format!("Using cached {}?", file.file_name));
     } else {
         report(0.15, format!("Downloading {}?", file.file_name));
-        let bytes = super::pack::download_cf_file(&download_url).await?;
+        let on_bytes = on_progress.clone().map(|cb| {
+            progress::file_bytes_cb(cb, "Downloading pack", file.file_name.clone(), 0.05, 0.35)
+        });
+        let bytes = super::pack::download_cf_file(&download_url, on_bytes).await?;
         tokio::fs::write(&pack_path, &bytes).await?;
     }
 
@@ -1808,7 +2024,7 @@ pub async fn create_instance_from_curseforge_modpack(
         instance_name,
         java_path,
         resume_instance_id,
-        on_progress,
+        progress::nest_progress(on_progress, 0.35, 1.0, "Installing modpack"),
     )
     .await?;
 

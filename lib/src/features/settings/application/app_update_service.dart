@@ -329,10 +329,10 @@ class _GhRelease {
           return 50;
         }
       } else if (Platform.isWindows) {
-        if (n.contains('windows') || n.contains('win')) {
-          if (n.endsWith('.zip') || n.endsWith('.exe') || n.endsWith('.msi')) {
-            return 50;
-          }
+        if (n.contains('windows') || n.contains('win') || n.contains('setup')) {
+          if (n.contains('setup') && n.endsWith('.exe')) return 90;
+          if (n.endsWith('.exe') || n.endsWith('.msi')) return 80;
+          if (n.endsWith('.zip')) return 50;
         }
       } else if (Platform.isMacOS) {
         if ((n.contains('macos') || n.contains('darwin') || n.contains('osx')) &&

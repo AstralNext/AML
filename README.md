@@ -1,6 +1,10 @@
 # Astral Minecraft Launcher (AML)
 
-开源 Minecraft 启动器。
+开源 Minecraft 启动器。官网：[aml.astral.fan](https://aml.astral.fan/)
+
+## 下载
+
+到 [GitHub Releases](https://github.com/AstralNext/AML/releases/latest) 获取最新版。Windows 推荐安装包 `aml-*-windows-x64-setup.exe`，也提供 zip 便携包。
 
 ## 致谢
 

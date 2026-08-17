@@ -1,4 +1,5 @@
 import 'package:aml/src/features/settings/ui/about_settings_page.dart';
+import 'package:aml/src/features/settings/ui/cdn_settings_page.dart';
 import 'package:aml/src/features/settings/ui/game_instance_settings_page.dart';
 import 'package:aml/src/features/settings/ui/general_settings_page.dart';
 import 'package:aml/src/features/settings/ui/java_settings_page.dart';
@@ -59,6 +60,12 @@ class SettingsPages {
       title: '默认游戏实例配置',
       icon: Icons.videogame_asset,
       page: GameInstanceSettingsPage(),
+    ),
+    SettingsPageEntry(
+      id: 'cdn',
+      title: '网络',
+      icon: Icons.lan,
+      page: CdnSettingsPage(),
     ),
     SettingsPageEntry(
       id: 'resource',

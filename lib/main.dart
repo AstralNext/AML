@@ -7,12 +7,14 @@ import 'package:aml/src/app/di/service_locator.dart';
 import 'package:aml/src/app/launch_link.dart';
 import 'package:aml/src/app/state/pending_launch_state.dart';
 import 'package:aml/src/app/window_tray_controller.dart';
+import 'package:aml/src/features/settings/application/proxy_runtime.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  ProxyRuntime.installHttpOverrides();
 
   // Single-instance: second process forwards argv to the running app and exits.
   if (Platform.isWindows) {

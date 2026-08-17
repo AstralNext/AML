@@ -353,12 +353,12 @@ class _NavRectButtonState extends State<NavRectButton>
                 duration: const Duration(milliseconds: 100),
                 curve: Curves.easeInOut,
                 width: widget.width,
-                height: 37,
                 padding: widget.padding ??
-                    const EdgeInsets.symmetric(horizontal: 14),
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 constraints: widget.width != null
                     ? BoxConstraints(maxWidth: widget.width!)
                     : null,
+                clipBehavior: Clip.none,
                 decoration: BoxDecoration(
                   color: currentBgColor,
                   borderRadius: BorderRadius.circular(10),
@@ -396,21 +396,7 @@ class _NavRectButtonState extends State<NavRectButton>
                     if (widget.text != null) ...[
                       if (widget.icon != null || widget.image != null)
                         const SizedBox(width: 8),
-                      Flexible(
-                        child: AnimatedDefaultTextStyle(
-                          duration: const Duration(milliseconds: 100),
-                          curve: Curves.easeInOut,
-                          style: DefaultTextStyle.of(context).style.copyWith(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: currentTextColor,
-                          ),
-                          child: Text(
-                            widget.text!,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
+                      _buttonLabel(context, currentTextColor),
                     ],
                   ],
                 ),
@@ -425,5 +411,26 @@ class _NavRectButtonState extends State<NavRectButton>
     return widget.label != null && widget.label!.isNotEmpty
         ? CustomTooltip(message: widget.label ?? '', child: content)
         : content;
+  }
+
+  Widget _buttonLabel(BuildContext context, Color currentTextColor) {
+    final label = AnimatedDefaultTextStyle(
+      duration: const Duration(milliseconds: 100),
+      curve: Curves.easeInOut,
+      style: DefaultTextStyle.of(context).style.copyWith(
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        height: 1.25,
+        color: currentTextColor,
+      ),
+      child: Text(
+        widget.text!,
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+    if (widget.width == null) return label;
+    return Flexible(child: label);
   }
 }

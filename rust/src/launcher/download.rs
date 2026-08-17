@@ -13,9 +13,10 @@ use crate::meta::minecraft::{
 };
 
 use super::dirs;
+use super::progress::{self, BytesProgressFn};
 use super::rules::{parse_rules, RuleFeatures};
 
-pub type ProgressFn = Arc<dyn Fn(f64, String) + Send + Sync>;
+pub use super::progress::ProgressFn;
 
 /// Total attempts per URL (initial try + retries), matching Modrinth-style resilience.
 pub const DOWNLOAD_ATTEMPTS: u32 = 3;
@@ -25,12 +26,6 @@ pub const PACK_DOWNLOAD_CONCURRENCY: usize = 32;
 
 /// TCP connect timeout for launcher HTTP clients.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Max wait for response headers on a download.
-pub const DOWNLOAD_HEADER_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Abort if no body bytes arrive for this long (stalled transfer).
-pub const DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// Absolute upper bound for any single HTTP request (safety net).
 pub const REQUEST_OVERALL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -83,8 +78,9 @@ async fn download_checked_once(
     client: &Client,
     url: &str,
     expected_sha1: Option<&str>,
+    on_bytes: Option<BytesProgressFn>,
 ) -> Result<Vec<u8>> {
-    let bytes = fetch_bytes_with_timeout(client, url, None).await?;
+    let bytes = fetch_bytes_with_timeout(client, url, None, on_bytes).await?;
     if let Some(expected) = expected_sha1 {
         let actual = sha1_hex(&bytes);
         if !expected.is_empty() && actual != expected {
@@ -95,47 +91,14 @@ async fn download_checked_once(
 }
 
 /// GET [url] with header + idle-body timeouts. Optional extra headers (e.g. CF API key).
+/// Files larger than 10 MiB use parallel `Range` requests when the server allows it.
 pub(crate) async fn fetch_bytes_with_timeout(
     client: &Client,
     url: &str,
     extra_headers: Option<&[(&str, &str)]>,
+    on_bytes: Option<BytesProgressFn>,
 ) -> Result<Vec<u8>> {
-    let mut req = client.get(url);
-    if let Some(headers) = extra_headers {
-        for (k, v) in headers {
-            req = req.header(*k, *v);
-        }
-    }
-    let resp = tokio::time::timeout(DOWNLOAD_HEADER_TIMEOUT, req.send())
-        .await
-        .map_err(|_| anyhow!("下载连接超时（{DOWNLOAD_HEADER_TIMEOUT:?}）: {url}"))?
-        .with_context(|| format!("请求失败: {url}"))?
-        .error_for_status()
-        .with_context(|| format!("HTTP 错误: {url}"))?;
-    read_body_with_idle_timeout(resp, DOWNLOAD_IDLE_TIMEOUT)
-        .await
-        .with_context(|| format!("下载中断: {url}"))
-}
-
-/// Read response body; fail if no chunk arrives within [idle].
-pub(crate) async fn read_body_with_idle_timeout(
-    response: reqwest::Response,
-    idle: Duration,
-) -> Result<Vec<u8>> {
-    use futures::StreamExt;
-    let mut stream = response.bytes_stream();
-    let mut buf = Vec::new();
-    loop {
-        match tokio::time::timeout(idle, stream.next()).await {
-            Ok(Some(Ok(chunk))) => buf.extend_from_slice(&chunk),
-            Ok(Some(Err(e))) => return Err(e.into()),
-            Ok(None) => break,
-            Err(_) => {
-                anyhow::bail!("下载停滞：{idle:?} 内未收到数据");
-            }
-        }
-    }
-    Ok(buf)
+    super::http_download::get_bytes(client, url, extra_headers, on_bytes).await
 }
 
 /// Download with checksum validation and automatic retries.
@@ -147,10 +110,11 @@ pub(crate) async fn download_checked_with_retry(
     url: &str,
     expected_sha1: Option<&str>,
     on_retry: Option<&(dyn Fn(u32, u32) + Send + Sync)>,
+    on_bytes: Option<BytesProgressFn>,
 ) -> Result<Vec<u8>> {
     let mut last_err = None;
     for attempt in 1..=DOWNLOAD_ATTEMPTS {
-        match download_checked_once(client, url, expected_sha1).await {
+        match download_checked_once(client, url, expected_sha1, on_bytes.clone()).await {
             Ok(bytes) => return Ok(bytes),
             Err(e) => {
                 last_err = Some(e);
@@ -166,6 +130,70 @@ pub(crate) async fn download_checked_with_retry(
     Err(last_err.unwrap_or_else(|| anyhow!("download failed for {url}")))
 }
 
+pub(crate) async fn download_to_path_with_retry(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    expected_sha1: Option<&str>,
+    extra_headers: Option<&[(&str, &str)]>,
+    on_retry: Option<&(dyn Fn(u32, u32) + Send + Sync)>,
+    on_bytes: Option<BytesProgressFn>,
+) -> Result<()> {
+    let mut last_err = None;
+    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+        match super::http_download::get_to_path(
+            client,
+            url,
+            dest,
+            extra_headers,
+            expected_sha1,
+            on_bytes.clone(),
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt < DOWNLOAD_ATTEMPTS {
+                    if let Some(cb) = on_retry {
+                        cb(attempt + 1, DOWNLOAD_ATTEMPTS);
+                    }
+                    tokio::time::sleep(Duration::from_millis(250 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("download failed for {url}")))
+}
+
+pub(crate) async fn download_to_path_with_mcim_fallback(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    expected_sha1: Option<&str>,
+    on_retry: Option<&(dyn Fn(u32, u32) + Send + Sync)>,
+    on_bytes: Option<BytesProgressFn>,
+) -> Result<()> {
+    let mut last_err = None;
+    for candidate in crate::config::mcim_url_candidates(url) {
+        match download_to_path_with_retry(
+            client,
+            &candidate,
+            dest,
+            expected_sha1,
+            None,
+            on_retry,
+            on_bytes.clone(),
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("download failed for {url}")))
+}
+
 /// Try official URL then MCIM CDN mirror (each with retries).
 pub(crate) async fn download_checked_with_mcim_fallback(
     client: &Client,
@@ -173,9 +201,27 @@ pub(crate) async fn download_checked_with_mcim_fallback(
     expected_sha1: Option<&str>,
     on_retry: Option<&(dyn Fn(u32, u32) + Send + Sync)>,
 ) -> Result<Vec<u8>> {
+    download_checked_with_mcim_fallback_bytes(client, url, expected_sha1, on_retry, None).await
+}
+
+pub(crate) async fn download_checked_with_mcim_fallback_bytes(
+    client: &Client,
+    url: &str,
+    expected_sha1: Option<&str>,
+    on_retry: Option<&(dyn Fn(u32, u32) + Send + Sync)>,
+    on_bytes: Option<BytesProgressFn>,
+) -> Result<Vec<u8>> {
     let mut last_err = None;
     for candidate in crate::config::mcim_url_candidates(url) {
-        match download_checked_with_retry(client, &candidate, expected_sha1, on_retry).await {
+        match download_checked_with_retry(
+            client,
+            &candidate,
+            expected_sha1,
+            on_retry,
+            on_bytes.clone(),
+        )
+        .await
+        {
             Ok(bytes) => return Ok(bytes),
             Err(e) => last_err = Some(e),
         }
@@ -188,37 +234,16 @@ pub(crate) async fn fetch_bytes_with_mcim_fallback(
     client: &Client,
     url: &str,
     extra_headers: Option<&[(&str, &str)]>,
+    on_bytes: Option<BytesProgressFn>,
 ) -> Result<Vec<u8>> {
     let mut last_err = None;
     for candidate in crate::config::mcim_url_candidates(url) {
-        match fetch_bytes_with_timeout(client, &candidate, extra_headers).await {
+        match fetch_bytes_with_timeout(client, &candidate, extra_headers, on_bytes.clone()).await {
             Ok(bytes) => return Ok(bytes),
             Err(e) => last_err = Some(e),
         }
     }
     Err(last_err.unwrap_or_else(|| anyhow!("download failed: {url}")))
-}
-
-async fn download_checked(
-    client: &Client,
-    url: &str,
-    expected_sha1: Option<&str>,
-) -> Result<Vec<u8>> {
-    download_checked_with_retry(client, url, expected_sha1, None).await
-}
-
-async fn try_download_checked(
-    client: &Client,
-    url: &str,
-    expected_sha1: Option<&str>,
-) -> Result<Option<Vec<u8>>> {
-    match download_checked(client, url, expected_sha1).await {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(err) => {
-            tracing::debug!("optional library download failed for {url}: {err:#}");
-            Ok(None)
-        }
-    }
 }
 
 fn arch_width(java_arch: &str) -> &'static str {
@@ -252,34 +277,28 @@ async fn write_library_file(
     url: &str,
     expected_sha: &str,
     required: bool,
-    on_progress: Option<&ProgressFn>,
-    progress_value: f64,
-) -> Result<()> {
+    on_bytes: Option<BytesProgressFn>,
+) -> Result<bool> {
     if library_file_cached(dest, expected_sha).await {
-        return Ok(());
+        return Ok(false);
     }
     let sha = if expected_sha.is_empty() {
         None
     } else {
         Some(expected_sha)
     };
-    let on_retry = |attempt: u32, max: u32| {
-        if let Some(cb) = on_progress {
-            cb(
-                progress_value,
-                format!("Retrying download ({attempt}/{max})…"),
-            );
-        }
-    };
-    let bytes = if required {
-        download_checked_with_retry(client, url, sha, Some(&on_retry)).await?
-    } else if let Some(bytes) = try_download_checked(client, url, sha).await? {
-        bytes
+    if required {
+        download_to_path_with_mcim_fallback(client, url, dest, sha, None, on_bytes).await?;
+        Ok(true)
     } else {
-        return Ok(());
-    };
-    write_file(dest, &bytes).await?;
-    Ok(())
+        match download_to_path_with_mcim_fallback(client, url, dest, sha, None, on_bytes).await {
+            Ok(()) => Ok(true),
+            Err(err) => {
+                tracing::debug!("optional library download failed for {url}: {err:#}");
+                Ok(false)
+            }
+        }
+    }
 }
 
 async fn write_file(path: &Path, data: &[u8]) -> Result<()> {
@@ -327,19 +346,34 @@ pub async fn download_minecraft(
     on_progress: Option<ProgressFn>,
 ) -> Result<()> {
     let client = super::manifest::http_client()?;
-    let report = |p: f64, msg: String| {
-        if let Some(cb) = &on_progress {
-            cb(p, msg);
-        }
-    };
-
-    report(0.05, "Downloading client…".into());
+    progress::report_task(
+        &on_progress,
+        0.02,
+        progress::TaskProgress {
+            stage: "Downloading client".into(),
+            ..Default::default()
+        },
+    );
     download_client(&client, resource_dir, info, version_jar_id, &on_progress).await?;
 
-    report(0.15, "Downloading libraries…".into());
+    progress::report_task(
+        &on_progress,
+        0.15,
+        progress::TaskProgress {
+            stage: "Downloading libraries".into(),
+            ..Default::default()
+        },
+    );
     download_libraries(&client, resource_dir, info, java_arch, &on_progress).await?;
 
-    report(0.55, "Extracting natives…".into());
+    progress::report_task(
+        &on_progress,
+        0.55,
+        progress::TaskProgress {
+            stage: "Extracting natives".into(),
+            ..Default::default()
+        },
+    );
     extract_natives(
         &client,
         resource_dir,
@@ -350,7 +384,14 @@ pub async fn download_minecraft(
     )
     .await?;
 
-    report(0.65, "Downloading assets…".into());
+    progress::report_task(
+        &on_progress,
+        0.65,
+        progress::TaskProgress {
+            stage: "Downloading assets".into(),
+            ..Default::default()
+        },
+    );
     download_assets(
         &client,
         resource_dir,
@@ -360,10 +401,19 @@ pub async fn download_minecraft(
     )
     .await?;
 
-    report(0.95, "Downloading log config…".into());
+    progress::report_task(
+        &on_progress,
+        0.95,
+        progress::TaskProgress {
+            stage: "Downloading log config".into(),
+            ..Default::default()
+        },
+    );
     download_log_config(&client, resource_dir, info, &on_progress).await?;
 
-    report(1.0, "Download complete".into());
+    if let Some(cb) = &on_progress {
+        cb(1.0, "Download complete".into());
+    }
     Ok(())
 }
 
@@ -382,20 +432,32 @@ async fn download_client(
         .join(version_jar_id)
         .join(format!("{version_jar_id}.jar"));
     if dest.exists() {
-        let existing = tokio::fs::read(&dest).await?;
-        if sha1_hex(&existing) == download.sha1 {
+        if sha1_file(&dest)
+            .await
+            .ok()
+            .is_some_and(|actual| actual.eq_ignore_ascii_case(&download.sha1))
+        {
             return Ok(());
         }
     }
-    let on_retry = |attempt: u32, max: u32| {
-        if let Some(cb) = on_progress {
-            cb(0.05, format!("Retrying download ({attempt}/{max})…"));
-        }
-    };
-    let bytes =
-        download_checked_with_retry(client, &download.url, Some(&download.sha1), Some(&on_retry))
-            .await?;
-    write_file(&dest, &bytes).await?;
+    let on_bytes = on_progress.clone().map(|cb| {
+        progress::file_bytes_cb(
+            cb,
+            "Downloading client",
+            format!("{version_jar_id}.jar"),
+            0.02,
+            0.15,
+        )
+    });
+    download_to_path_with_mcim_fallback(
+        client,
+        &download.url,
+        &dest,
+        Some(&download.sha1),
+        None,
+        on_bytes,
+    )
+    .await?;
     Ok(())
 }
 
@@ -419,28 +481,21 @@ async fn download_libraries(
         })
         .collect();
 
-    let total = libs.len().max(1) as f64;
+    let batch = on_progress.clone().map(|cb| {
+        progress::BatchReporter::new(cb, "Downloading libraries", 0.15, 0.55, libs.len() as u64)
+    });
     let sem = Arc::new(Semaphore::new(32));
     let mut futs = FuturesUnordered::new();
 
-    for (i, lib) in libs.into_iter().enumerate() {
+    for lib in libs {
         let client = client.clone();
         let sem = sem.clone();
-        let on_progress = on_progress.clone();
+        let batch = batch.clone();
         let libs_root = libs_root.clone();
         let lib = lib.clone();
         futs.push(async move {
             let _permit = sem.acquire().await.ok();
-            download_one_library(
-                &client,
-                &libs_root,
-                &lib,
-                java_arch,
-                on_progress.as_ref(),
-                i,
-                total,
-            )
-            .await?;
+            download_one_library(&client, &libs_root, &lib, java_arch, batch.as_ref()).await?;
             Ok::<(), anyhow::Error>(())
         });
     }
@@ -456,76 +511,59 @@ async fn download_one_library(
     libs_root: &Path,
     lib: &Library,
     java_arch: &str,
-    on_progress: Option<&ProgressFn>,
-    index: usize,
-    total: f64,
+    batch: Option<&progress::BatchReporter>,
 ) -> Result<()> {
-    let progress_value = 0.15 + (index as f64 / total) * 0.35;
-    // Libraries with natives only: fetch the native jar.
+    let name = lib.name.clone();
+
+    let run = |url: String, sha: String, required: bool, dest: PathBuf| async move {
+        if library_file_cached(&dest, &sha).await {
+            if let Some(b) = batch {
+                b.skip_file();
+            }
+            return Ok(());
+        }
+        let on_bytes = batch.map(|b| b.file_bytes_cb(&name));
+        write_library_file(client, &dest, &url, &sha, required, on_bytes).await?;
+        if let Some(b) = batch {
+            b.finish_file();
+        }
+        Ok(())
+    };
+
     if let Some((os_key, classifiers)) = lib.natives_os_key_and_classifiers(java_arch) {
         let classifier = parsed_native_classifier(os_key, java_arch);
         let Some(native) = classifiers.get(&classifier) else {
+            if let Some(b) = batch {
+                b.skip_file();
+            }
             return Ok(());
         };
         let path = native.path.clone().unwrap_or_else(|| {
             get_path_from_artifact(&format!("{}:{classifier}", lib.name)).unwrap_or_default()
         });
-        let dest = libs_root.join(&path);
-        write_library_file(
-            client,
-            &dest,
-            &native.url,
-            &native.sha1,
-            true,
-            on_progress,
-            progress_value,
-        )
-        .await?;
+        return run(native.url.clone(), native.sha1.clone(), true, libs_root.join(&path)).await;
+    }
+
+    let path = library_path(lib)?;
+    let dest = libs_root.join(&path);
+    let expected_sha = lib
+        .downloads
+        .as_ref()
+        .and_then(|d| d.artifact.as_ref())
+        .map(|a| a.sha1.clone())
+        .unwrap_or_default();
+
+    if let Some(artifact) = lib
+        .downloads
+        .as_ref()
+        .and_then(|d| d.artifact.as_ref())
+        .filter(|a| !a.url.is_empty())
+    {
+        run(artifact.url.clone(), expected_sha, true, dest).await
     } else {
-        let path = library_path(lib)?;
-        let dest = libs_root.join(&path);
-        let expected_sha = lib
-            .downloads
-            .as_ref()
-            .and_then(|d| d.artifact.as_ref())
-            .map(|a| a.sha1.clone())
-            .unwrap_or_default();
-
-        if let Some(artifact) = lib
-            .downloads
-            .as_ref()
-            .and_then(|d| d.artifact.as_ref())
-            .filter(|a| !a.url.is_empty())
-        {
-            write_library_file(
-                client,
-                &dest,
-                &artifact.url,
-                &expected_sha,
-                true,
-                on_progress,
-                progress_value,
-            )
-            .await?;
-        } else {
-            let url = library_url(lib, &path)?;
-            write_library_file(
-                client,
-                &dest,
-                &url,
-                &expected_sha,
-                false,
-                on_progress,
-                progress_value,
-            )
-            .await?;
-        }
+        let url = library_url(lib, &path)?;
+        run(url, expected_sha, false, dest).await
     }
-
-    if let Some(cb) = on_progress {
-        cb(progress_value, format!("Library {}", lib.name));
-    }
-    Ok(())
 }
 
 async fn extract_natives(
@@ -573,7 +611,7 @@ async fn extract_natives(
                     cb(0.55, format!("Retrying download ({attempt}/{max})…"));
                 }
             };
-            let bytes = download_checked_with_retry(
+            let bytes = download_checked_with_mcim_fallback(
                 client,
                 &native.url,
                 Some(&native.sha1),
@@ -630,7 +668,7 @@ async fn download_assets(
                 cb(0.65, format!("Retrying download ({attempt}/{max})…"));
             }
         };
-        let bytes = download_checked_with_retry(
+        let bytes = download_checked_with_mcim_fallback(
             client,
             &info.asset_index.url,
             Some(&info.asset_index.sha1),
@@ -643,16 +681,24 @@ async fn download_assets(
     let index: AssetsIndex = serde_json::from_slice(&index_bytes)?;
 
     let entries: Vec<(String, crate::meta::minecraft::Asset)> = index.objects.into_iter().collect();
-    let total = entries.len().max(1) as f64;
+    let batch = on_progress.clone().map(|cb| {
+        progress::BatchReporter::new(
+            cb,
+            "Downloading assets",
+            0.65,
+            0.95,
+            entries.len() as u64,
+        )
+    });
     let sem = Arc::new(Semaphore::new(64));
     let mut futs = FuturesUnordered::new();
     let objects_root = dirs::assets(resource_dir).join("objects");
     let legacy_root = dirs::legacy_assets(resource_dir);
 
-    for (i, (name, asset)) in entries.into_iter().enumerate() {
+    for (name, asset) in entries {
         let client = client.clone();
         let sem = sem.clone();
-        let on_progress = on_progress.clone();
+        let batch = batch.clone();
         let objects_root = objects_root.clone();
         let legacy_root = legacy_root.clone();
         futs.push(async move {
@@ -669,23 +715,28 @@ async fn download_assets(
             let needs_legacy = with_legacy && !legacy_dest.exists();
 
             if !needs_object && !needs_legacy {
+                if let Some(b) = &batch {
+                    b.skip_file();
+                }
                 return Ok::<(), anyhow::Error>(());
             }
 
             let bytes = if object_dest.exists() && !needs_object {
                 tokio::fs::read(&object_dest).await?
             } else {
-                let progress_value = 0.65 + (i as f64 / total) * 0.25;
-                let on_retry = |attempt: u32, max: u32| {
-                    if let Some(cb) = &on_progress {
-                        cb(
-                            progress_value,
-                            format!("Retrying download ({attempt}/{max})…"),
-                        );
-                    }
-                };
-                download_checked_with_retry(&client, &url, Some(&asset.hash), Some(&on_retry))
-                    .await?
+                let on_bytes = batch.as_ref().map(|b| b.file_bytes_cb(&name));
+                let bytes = download_checked_with_mcim_fallback_bytes(
+                    &client,
+                    &url,
+                    Some(&asset.hash),
+                    None,
+                    on_bytes,
+                )
+                .await?;
+                if let Some(b) = &batch {
+                    b.finish_file();
+                }
+                bytes
             };
 
             if needs_object || !object_dest.exists() {
@@ -698,12 +749,9 @@ async fn download_assets(
                 write_file(&legacy_dest, &bytes).await?;
             }
 
-            if let Some(cb) = &on_progress {
-                if i % 50 == 0 {
-                    cb(
-                        0.65 + (i as f64 / total) * 0.25,
-                        format!("Assets {i}/{}", total as u64),
-                    );
+            if object_dest.exists() && !needs_object {
+                if let Some(b) = &batch {
+                    b.skip_file();
                 }
             }
             Ok(())
@@ -739,7 +787,7 @@ async fn download_log_config(
         }
     };
     let bytes =
-        download_checked_with_retry(client, &file.url, Some(&file.sha1), Some(&on_retry)).await?;
+        download_checked_with_mcim_fallback(client, &file.url, Some(&file.sha1), Some(&on_retry)).await?;
     write_file(&dest, &bytes).await?;
     Ok(())
 }

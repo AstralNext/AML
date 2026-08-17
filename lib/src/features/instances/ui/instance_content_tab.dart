@@ -32,7 +32,7 @@ class InstanceContentTabState extends State<InstanceContentTab> {
   Set<String> _updatingContentPaths = {};
   String _contentQuery = '';
   String _contentFilter =
-      'all'; // all | mod | resourcepack | shader | datapack | updates
+      'all'; // all | mod | resourcepack | shader | datapack | updates | missing
   bool _contentLoading = false;
   bool _contentSyncing = false;
   bool _contentSyncedOnce = false;
@@ -132,6 +132,8 @@ class InstanceContentTabState extends State<InstanceContentTab> {
     var list = _mods.toList();
     if (_contentFilter == 'updates') {
       list = list.where((m) => m.hasUpdate).toList();
+    } else if (_contentFilter == 'missing') {
+      list = list.where((m) => m.isMissing).toList();
     } else if (_contentFilter != 'all') {
       list = list.where((m) => m.projectType == _contentFilter).toList();
     }
@@ -147,6 +149,9 @@ class InstanceContentTabState extends State<InstanceContentTab> {
       }).toList();
     }
     list.sort((a, b) {
+      if (a.isMissing != b.isMissing) {
+        return a.isMissing ? -1 : 1;
+      }
       final ta = (a.projectTitle ?? a.name).toLowerCase();
       final tb = (b.projectTitle ?? b.name).toLowerCase();
       return ta.compareTo(tb);
@@ -155,6 +160,8 @@ class InstanceContentTabState extends State<InstanceContentTab> {
   }
 
   int get _updateCount => _mods.where((m) => m.hasUpdate).length;
+
+  int get _missingCount => _mods.where((m) => m.isMissing).length;
 
   Set<String> get _presentTypes =>
       _mods.map((m) => m.projectType).where((t) => t.isNotEmpty).toSet();
@@ -223,12 +230,23 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                   padding: const EdgeInsets.only(left: 6),
                   child: _filterChip(tokens, t, contentTypeLabel(t)),
                 ),
+            if (_missingCount > 0)
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: _filterChip(tokens, 'missing', '未下载 ($_missingCount)'),
+              ),
             if (_updateCount > 0)
               Padding(
                 padding: const EdgeInsets.only(left: 6),
                 child: _filterChip(tokens, 'updates', '更新 ($_updateCount)'),
               ),
             const Spacer(),
+            if (_missingCount > 0)
+              TextButton(
+                onPressed: _busy ? null : _downloadAllMissing,
+                style: TextButton.styleFrom(foregroundColor: tokens.colorBrand),
+                child: const Text('下载全部'),
+              ),
             if (_updateCount > 0)
               TextButton(
                 onPressed: _busy ? null : _updateAllContent,
@@ -361,15 +379,37 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                     ),
                   )
                 : ListView.separated(
+                    addSemanticIndexes: false,
                     itemCount: filtered.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 6),
                     itemBuilder: (context, index) {
-                      return _contentRow(tokens, filtered[index]);
+                      final mod = filtered[index];
+                      return KeyedSubtree(
+                        key: ValueKey(mod.relativePath),
+                        child: _contentRow(tokens, mod),
+                      );
                     },
                   ),
           ),
         ],
       ],
+    );
+  }
+
+  Widget _tooltipIconButton({
+    required String message,
+    required VoidCallback? onPressed,
+    required Widget icon,
+  }) {
+    // Windows AXTree breaks when Tooltip overlays are scrolled out of a ListView.
+    return Tooltip(
+      message: message,
+      excludeFromSemantics: true,
+      waitDuration: const Duration(milliseconds: 400),
+      child: IconButton(
+        onPressed: onPressed,
+        icon: icon,
+      ),
     );
   }
 
@@ -444,16 +484,19 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                 flex: 5,
                 child: Row(
                   children: [
-                    mod.projectIconUrl != null && mod.projectIconUrl!.isNotEmpty
-                        ? CachedRemoteImage(
-                            url: mod.projectIconUrl!,
-                            width: 40,
-                            height: 40,
-                            borderRadius: BorderRadius.circular(8),
-                            placeholder: _iconFallback(tokens),
-                            error: _iconFallback(tokens),
-                          )
-                        : _iconFallback(tokens),
+                    ExcludeSemantics(
+                      child: mod.projectIconUrl != null &&
+                              mod.projectIconUrl!.isNotEmpty
+                          ? CachedRemoteImage(
+                              url: mod.projectIconUrl!,
+                              width: 40,
+                              height: 40,
+                              borderRadius: BorderRadius.circular(8),
+                              placeholder: _iconFallback(tokens),
+                              error: _iconFallback(tokens),
+                            )
+                          : _iconFallback(tokens),
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -466,13 +509,13 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                             style: TextStyle(
                               fontWeight: FontWeight.w800,
                               color: tokens.colorContrast,
-                              decoration: mod.enabled
-                                  ? null
-                                  : TextDecoration.lineThrough,
+                              decoration: !mod.isMissing && !mod.enabled
+                                  ? TextDecoration.lineThrough
+                                  : null,
                             ),
                           ),
                           const SizedBox(height: 2),
-                          if (author != null && author.isNotEmpty)
+                          if (!mod.isMissing && author != null && author.isNotEmpty)
                             GestureDetector(
                               behavior: HitTestBehavior.opaque,
                               onTap: canOpenAuthor ? openAuthor : null,
@@ -520,9 +563,11 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                             )
                           else
                             Text(
-                              mod.projectId == null
-                                  ? '本地文件 · ${contentTypeLabel(mod.projectType)}'
-                                  : '${sourceLabel(contentSourceOf(projectId: mod.projectId))} · ${contentTypeLabel(mod.projectType)}',
+                              mod.isMissing
+                                  ? '未下载 · ${contentTypeLabel(mod.projectType)}'
+                                  : mod.projectId == null
+                                      ? '本地文件 · ${contentTypeLabel(mod.projectType)}'
+                                      : '${sourceLabel(contentSourceOf(projectId: mod.projectId))} · ${contentTypeLabel(mod.projectType)}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -574,13 +619,40 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                 ),
               ),
               SizedBox(
-                width: 168,
+                width: mod.isMissing ? 196 : 168,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    if (mod.hasUpdate)
-                      IconButton(
-                        tooltip: '更新',
+                    if (mod.isMissing)
+                      TextButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () => _downloadMissingContent(mod),
+                        icon: _updatingContentPaths.contains(mod.relativePath)
+                            ? SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: tokens.colorBrand,
+                                ),
+                              )
+                            : Icon(
+                                Icons.download_rounded,
+                                size: 18,
+                                color: tokens.colorBrand,
+                              ),
+                        label: Text(
+                          '下载',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: tokens.colorBrand,
+                          ),
+                        ),
+                      )
+                    else if (mod.hasUpdate)
+                      _tooltipIconButton(
+                        message: '更新',
                         onPressed: _busy ? null : () => _updateContent(mod),
                         icon: _updatingContentPaths.contains(mod.relativePath)
                             ? SizedBox(
@@ -597,8 +669,8 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                               ),
                       )
                     else if (canSwitch)
-                      IconButton(
-                        tooltip: '切换版本',
+                      _tooltipIconButton(
+                        message: '切换版本',
                         onPressed:
                             _busy ? null : () => _switchContentVersion(mod),
                         icon: Icon(
@@ -606,31 +678,32 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                           color: tokens.colorBase.withValues(alpha: 0.85),
                         ),
                       ),
-                    Switch(
-                      value: mod.enabled,
-                      activeThumbColor: tokens.colorOnBrand,
-                      activeTrackColor: tokens.colorBrand,
-                      onChanged: (v) async {
-                        try {
-                          await rust.setModEnabled(
-                            instanceId: widget.instanceId,
-                            relativePath: mod.relativePath,
-                            enabled: v,
-                          );
-                          await _refreshContent(syncMetadata: false);
-                        } catch (e) {
-                          if (!mounted) return;
-                          showAppSnackBar('$e', isError: true);
-                        }
-                      },
-                    ),
-                    IconButton(
-                      tooltip: '删除',
+                    if (!mod.isMissing)
+                      Switch(
+                        value: mod.enabled,
+                        activeThumbColor: tokens.colorOnBrand,
+                        activeTrackColor: tokens.colorBrand,
+                        onChanged: (v) async {
+                          try {
+                            await rust.setModEnabled(
+                              instanceId: widget.instanceId,
+                              relativePath: mod.relativePath,
+                              enabled: v,
+                            );
+                            await _refreshContent(syncMetadata: false);
+                          } catch (e) {
+                            if (!mounted) return;
+                            showAppSnackBar('$e', isError: true);
+                          }
+                        },
+                      ),
+                    _tooltipIconButton(
+                      message: '删除',
+                      onPressed: () => _confirmDelete(mod),
                       icon: Icon(
                         Icons.delete_outline,
                         color: tokens.colorBase.withValues(alpha: 0.85),
                       ),
-                      onPressed: () => _confirmDelete(mod),
                     ),
                   ],
                 ),
@@ -640,6 +713,93 @@ class InstanceContentTabState extends State<InstanceContentTab> {
         ),
       ),
     );
+  }
+
+  Future<void> _downloadMissingContent(rust.ModFileDto mod) async {
+    setState(() {
+      _busy = true;
+      _updatingContentPaths = {mod.relativePath};
+    });
+    _store.beginInstanceOperation(widget.instanceId, '下载缺失内容中…');
+    final progress = getIt<ProgressStore>().createProgressItem(
+      '下载 ${mod.projectTitle ?? mod.name}',
+    );
+    getIt<ProgressStore>().progressVisibility.value = true;
+    try {
+      await rust.retryMissingContent(
+        instanceId: widget.instanceId,
+        relativePath: mod.relativePath,
+        onProgress: (p, msg) async {
+          progress.setProgress(p, msg);
+        },
+      );
+      await _refreshContent(syncMetadata: false);
+      await _store.refresh();
+      if (mounted) showAppSnackBar('已下载 ${mod.projectTitle ?? mod.name}');
+    } catch (e) {
+      if (mounted) showAppSnackBar('下载失败: $e', isError: true);
+    } finally {
+      progress.dispose();
+      _store.endInstanceOperation(widget.instanceId);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _updatingContentPaths = {};
+        });
+      }
+    }
+  }
+
+  Future<void> _downloadAllMissing() async {
+    final pending = _mods.where((m) => m.isMissing).toList();
+    if (pending.isEmpty) return;
+    setState(() {
+      _busy = true;
+      _updatingContentPaths = {
+        for (final mod in pending) mod.relativePath,
+      };
+    });
+    _store.beginInstanceOperation(widget.instanceId, '下载缺失内容中…');
+    var ok = 0;
+    var fail = 0;
+    try {
+      for (final mod in pending) {
+        final progress = getIt<ProgressStore>().createProgressItem(
+          '下载 ${mod.projectTitle ?? mod.name}',
+        );
+        getIt<ProgressStore>().progressVisibility.value = true;
+        try {
+          await rust.retryMissingContent(
+            instanceId: widget.instanceId,
+            relativePath: mod.relativePath,
+            onProgress: (p, msg) async {
+              progress.setProgress(p, msg);
+            },
+          );
+          ok++;
+        } catch (_) {
+          fail++;
+        } finally {
+          progress.dispose();
+        }
+      }
+      await _refreshContent(syncMetadata: false);
+      await _store.refresh();
+      if (mounted) {
+        showAppSnackBar(
+          fail == 0 ? '已下载 $ok 个项目' : '下载完成：成功 $ok，失败 $fail',
+          isError: fail > 0,
+        );
+      }
+    } finally {
+      _store.endInstanceOperation(widget.instanceId);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _updatingContentPaths = {};
+        });
+      }
+    }
   }
 
   Future<void> _installContentVersion({
@@ -900,8 +1060,10 @@ class InstanceContentTabState extends State<InstanceContentTab> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除内容'),
-        content: Text('确定删除 $title？'),
+        title: Text(mod.isMissing ? '移除未下载内容' : '删除内容'),
+        content: Text(
+          mod.isMissing ? '确定从列表中移除 $title？文件尚未下载。' : '确定删除 $title？',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
