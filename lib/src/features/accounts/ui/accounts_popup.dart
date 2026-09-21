@@ -1,21 +1,16 @@
-import 'dart:typed_data';
-
 import 'package:aml/src/app/di/service_locator.dart';
-import 'package:aml/src/features/accounts/application/account_avatar_cache.dart';
-import 'package:aml/src/features/accounts/ui/account_avatar.dart';
+import 'package:aml/src/features/accounts/ui/accounts_account_tile.dart';
+import 'package:aml/src/features/accounts/ui/accounts_add_section.dart';
 import 'package:aml/src/features/instances/application/account_store.dart';
-import 'package:aml/src/features/wardrobe/ui/wardrobe_page.dart';
+import 'package:aml/src/features/wardrobe/ui/skin_editor_dialog.dart';
 import 'package:aml/src/rust/api/launcher.dart' as rust;
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/widgets/app_dialog_actions.dart';
 import 'package:aml/src/shared/widgets/components/buttons/custom_button.dart';
 import 'package:aml/src/shared/widgets/components/dialogs/modal_animated_dialog.dart';
 import 'package:aml/src/shared/widgets/components/dialogs/modal_motion.dart';
-import 'package:aml/src/shared/widgets/components/inputs/dropdown_button_widget.dart';
-import 'package:aml/src/shared/widgets/components/inputs/input_bar.dart';
 import 'package:aml/src/shared/widgets/components/navigation/nav_rect_button.dart';
-import 'package:aml/src/shared/widgets/app_dialog_actions.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:signals_flutter/signals_flutter.dart';
 
 /// Opens the accounts popup (settings-style modal overlay).
@@ -114,17 +109,7 @@ class AccountsPopup extends StatefulWidget {
 class _AccountsPopupState extends State<AccountsPopup>
     with SingleTickerProviderStateMixin {
   late final ModalMotion _motion;
-
-  final _offlineController = TextEditingController();
-  final _yggdrasilUsernameController = TextEditingController();
-  final _yggdrasilPasswordController = TextEditingController();
-  bool _showAdd = false;
-  String? _addAccountType;
   String? _status;
-  String? _selectedYggdrasilServiceId;
-  String? _pendingYggdrasilLoginId;
-  String? _selectedYggdrasilProfileId;
-  List<rust.YggdrasilProfileDto> _yggdrasilProfiles = const [];
 
   AccountStore get _store => getIt<AccountStore>();
 
@@ -137,9 +122,6 @@ class _AccountsPopupState extends State<AccountsPopup>
 
   @override
   void dispose() {
-    _offlineController.dispose();
-    _yggdrasilUsernameController.dispose();
-    _yggdrasilPasswordController.dispose();
     _motion.dispose();
     super.dispose();
   }
@@ -147,6 +129,10 @@ class _AccountsPopupState extends State<AccountsPopup>
   void _close() {
     _motion.reverse();
     Navigator.of(context).pop();
+  }
+
+  void _setStatus(String? status) {
+    setState(() => _status = status);
   }
 
   Future<void> _setActive(rust.AccountDto account) async {
@@ -197,57 +183,6 @@ class _AccountsPopupState extends State<AccountsPopup>
     }
   }
 
-  Future<void> _beginYggdrasilLogin(String serviceId) async {
-    final username = _yggdrasilUsernameController.text.trim();
-    final password = _yggdrasilPasswordController.text;
-    if (username.isEmpty || password.isEmpty) {
-      setState(() => _status = '请输入外置登录账号和密码');
-      return;
-    }
-    try {
-      setState(() => _status = '正在登录外置验证服务器…');
-      final login = await _store.beginYggdrasilLogin(
-        serviceId: serviceId,
-        username: username,
-        password: password,
-      );
-      _yggdrasilPasswordController.clear();
-      if (!mounted) return;
-      setState(() {
-        _pendingYggdrasilLoginId = login.loginId;
-        _yggdrasilProfiles = login.profiles;
-        _selectedYggdrasilProfileId = login.profiles.first.id;
-        _status = '请选择要添加的游戏角色';
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _status = '$e');
-    }
-  }
-
-  Future<void> _finishYggdrasilLogin() async {
-    final loginId = _pendingYggdrasilLoginId;
-    final profileId = _selectedYggdrasilProfileId;
-    if (loginId == null || profileId == null) return;
-    try {
-      await _store.finishYggdrasilLogin(
-        loginId: loginId,
-        profileId: profileId,
-      );
-      if (!mounted) return;
-      setState(() {
-        _pendingYggdrasilLoginId = null;
-        _yggdrasilProfiles = const [];
-        _status = '外置账号登录成功';
-        _showAdd = false;
-        _addAccountType = null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _status = '$e');
-    }
-  }
-
   String? _yggdrasilServiceName(String? id) {
     if (id == null) return null;
     for (final service in _store.yggdrasilServices.value) {
@@ -259,7 +194,6 @@ class _AccountsPopupState extends State<AccountsPopup>
   @override
   Widget build(BuildContext context) {
     final tokens = context.tokens;
-    final colorScheme = Theme.of(context).colorScheme;
 
     return AnimatedModalDialog.fromMotion(
       motion: _motion,
@@ -369,7 +303,7 @@ class _AccountsPopupState extends State<AccountsPopup>
                         return Column(
                           children: [
                             for (final a in accounts)
-                              _AccountTile(
+                              AccountTile(
                                 account: a,
                                 serviceName:
                                     _yggdrasilServiceName(a.authServerId),
@@ -383,308 +317,10 @@ class _AccountsPopupState extends State<AccountsPopup>
                         );
                       }),
                       const SizedBox(height: 12),
-                      if (!_showAdd)
-                        NavRectButton(
-                          isSelected: false,
-                          icon: Icons.add,
-                          defaultBackgroundColor: tokens.colorBrand,
-                          defaultColor: tokens.colorOnBrand,
-                          text: '添加账号',
-                          label: '添加账号',
-                          onTap: () => setState(() {
-                            _showAdd = true;
-                            _addAccountType = null;
-                          }),
-                        )
-                      else ...[
-                        Row(
-                          children: [
-                            Text(
-                              '添加账号',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: tokens.colorContrast,
-                              ),
-                            ),
-                            const Spacer(),
-                            TextButton(
-                              onPressed: () => setState(() {
-                                _showAdd = false;
-                                _addAccountType = null;
-                                _status = null;
-                              }),
-                              child: const Text('收起'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        if (_addAccountType == null) ...[
-                          NavRectButton(
-                            isSelected: false,
-                            icon: Icons.person_outline,
-                            defaultBackgroundColor: tokens.colorButtonBg,
-                            text: '离线账号',
-                            label: '选择离线账号',
-                            onTap: () => setState(
-                              () => _addAccountType = 'offline',
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          NavRectButton(
-                            isSelected: false,
-                            icon: Icons.window,
-                            defaultBackgroundColor: tokens.colorBrand,
-                            defaultColor: tokens.colorOnBrand,
-                            text: 'Microsoft 账号',
-                            label: '选择 Microsoft 账号',
-                            onTap: () => setState(
-                              () => _addAccountType = 'msa',
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          NavRectButton(
-                            isSelected: false,
-                            icon: Icons.admin_panel_settings_outlined,
-                            defaultBackgroundColor: tokens.colorButtonBg,
-                            text: 'Yggdrasil 外置账号',
-                            label: '选择外置账号',
-                            onTap: () => setState(
-                              () => _addAccountType = 'yggdrasil',
-                            ),
-                          ),
-                        ],
-                        if (_addAccountType != null)
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: TextButton.icon(
-                              onPressed: () => setState(() {
-                                _addAccountType = null;
-                                _pendingYggdrasilLoginId = null;
-                                _yggdrasilProfiles = const [];
-                                _status = null;
-                              }),
-                              icon: const Icon(Icons.arrow_back, size: 18),
-                              label: const Text('返回账号类型'),
-                            ),
-                          ),
-                        if (_addAccountType == 'offline') ...[
-                          Text(
-                            '离线账号',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: tokens.colorBase.withValues(alpha: 0.8),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: InputBarWidget(
-                                  colorScheme: colorScheme,
-                                  size: InputBarSize.medium,
-                                  hintText: '用户名',
-                                  controller: _offlineController,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              NavRectButton(
-                                isSelected: false,
-                                icon: Icons.add,
-                                defaultBackgroundColor: tokens.colorButtonBg,
-                                text: '添加',
-                                label: '添加',
-                                onTap: () async {
-                                  final name = _offlineController.text.trim();
-                                  if (name.isEmpty) return;
-                                  try {
-                                    await _store.createOffline(name);
-                                    _offlineController.clear();
-                                    setState(() {
-                                      _status = '已添加 $name';
-                                      _showAdd = false;
-                                      _addAccountType = null;
-                                    });
-                                  } catch (e) {
-                                    setState(() => _status = '$e');
-                                  }
-                                },
-                              ),
-                            ],
-                          ),
-                        ],
-                        if (_addAccountType == 'msa') ...[
-                          Text(
-                            '微软账号',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: tokens.colorBase.withValues(alpha: 0.8),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Watch((context) {
-                            final busy = _store.microsoftLoginBusy.value;
-                            return NavRectButton(
-                              isSelected: false,
-                              icon: busy ? Icons.hourglass_top : Icons.login,
-                              defaultBackgroundColor: tokens.colorBrand,
-                              defaultColor: tokens.colorOnBrand,
-                              text: busy ? '登录中…' : '登录 Microsoft 账号',
-                              label: busy ? '登录中' : '微软登录',
-                              onTap: busy
-                                  ? () {}
-                                  : () async {
-                                      setState(() => _status = '请在弹出窗口完成登录');
-                                      try {
-                                        final ok = await _store
-                                            .loginMicrosoft(context);
-                                        if (!mounted) return;
-                                        setState(() {
-                                          if (ok) {
-                                            _status = '微软账号登录成功';
-                                            _showAdd = false;
-                                            _addAccountType = null;
-                                          } else {
-                                            _status = '已取消登录';
-                                          }
-                                        });
-                                      } catch (e) {
-                                        if (!mounted) return;
-                                        setState(() => _status = '$e');
-                                      }
-                                    },
-                            );
-                          }),
-                        ],
-                        if (_addAccountType == 'yggdrasil') ...[
-                          Text(
-                            'Yggdrasil 外置登录',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: tokens.colorBase.withValues(alpha: 0.8),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Watch((context) {
-                            final services = _store.yggdrasilServices.value;
-                            final busy = _store.yggdrasilLoginBusy.value;
-                            if (services.isEmpty) {
-                              return Text(
-                                '请先在设置中配置外置登录服务。',
-                                style: TextStyle(
-                                  color:
-                                      tokens.colorBase.withValues(alpha: 0.65),
-                                ),
-                              );
-                            }
-                            if (_pendingYggdrasilLoginId != null) {
-                              return Text(
-                                '账号验证成功，请选择要添加的游戏角色。',
-                                style: TextStyle(
-                                  color:
-                                      tokens.colorBase.withValues(alpha: 0.72),
-                                ),
-                              );
-                            }
-                            final selectedId = services.any((service) =>
-                                    service.id == _selectedYggdrasilServiceId)
-                                ? _selectedYggdrasilServiceId!
-                                : services.first.id;
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    return DropdownButtonWidget(
-                                      width: constraints.maxWidth,
-                                      height: 38,
-                                      dropdownMinWidth: constraints.maxWidth,
-                                      colorScheme: colorScheme,
-                                      selectedValue: selectedId,
-                                      items: [
-                                        for (final service in services)
-                                          DropdownItem(
-                                            display: service.name,
-                                            value: service.id,
-                                          ),
-                                      ],
-                                      onChanged: busy
-                                          ? (_) {}
-                                          : (value) => setState(() =>
-                                              _selectedYggdrasilServiceId =
-                                                  value),
-                                    );
-                                  },
-                                ),
-                                const SizedBox(height: 10),
-                                InputBarWidget(
-                                  colorScheme: colorScheme,
-                                  size: InputBarSize.medium,
-                                  hintText: '邮箱、账号或角色名',
-                                  controller: _yggdrasilUsernameController,
-                                ),
-                                const SizedBox(height: 10),
-                                InputBarWidget(
-                                  colorScheme: colorScheme,
-                                  size: InputBarSize.medium,
-                                  hintText: '密码',
-                                  obscureText: true,
-                                  controller: _yggdrasilPasswordController,
-                                ),
-                                const SizedBox(height: 10),
-                                NavRectButton(
-                                  isSelected: false,
-                                  icon:
-                                      busy ? Icons.hourglass_top : Icons.login,
-                                  defaultBackgroundColor: tokens.colorButtonBg,
-                                  text: busy ? '登录中…' : '登录外置账号',
-                                  label: busy ? '登录中' : '外置登录',
-                                  onTap: busy
-                                      ? () {}
-                                      : () => _beginYggdrasilLogin(selectedId),
-                                ),
-                              ],
-                            );
-                          }),
-                          if (_pendingYggdrasilLoginId != null) ...[
-                            const SizedBox(height: 16),
-                            Text(
-                              '选择角色',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: tokens.colorContrast,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            for (final profile in _yggdrasilProfiles)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: _YggdrasilProfileOption(
-                                  profile: profile,
-                                  selected:
-                                      profile.id == _selectedYggdrasilProfileId,
-                                  onTap: () => setState(
-                                    () => _selectedYggdrasilProfileId =
-                                        profile.id,
-                                  ),
-                                ),
-                              ),
-                            const SizedBox(height: 10),
-                            NavRectButton(
-                              isSelected: false,
-                              icon: Icons.person_add_alt_1,
-                              defaultBackgroundColor: tokens.colorBrand,
-                              defaultColor: tokens.colorOnBrand,
-                              text: '添加所选角色',
-                              label: '添加角色',
-                              onTap: _finishYggdrasilLogin,
-                            ),
-                          ],
-                        ],
-                      ],
+                      AccountsAddSection(
+                        store: _store,
+                        onStatus: _setStatus,
+                      ),
                       if (_status != null) ...[
                         const SizedBox(height: 12),
                         Text(
@@ -700,269 +336,6 @@ class _AccountsPopupState extends State<AccountsPopup>
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _YggdrasilProfileOption extends StatefulWidget {
-  const _YggdrasilProfileOption({
-    required this.profile,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final rust.YggdrasilProfileDto profile;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  State<_YggdrasilProfileOption> createState() =>
-      _YggdrasilProfileOptionState();
-}
-
-class _YggdrasilProfileOptionState extends State<_YggdrasilProfileOption> {
-  Uint8List? _head;
-  bool _loading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadHead();
-  }
-
-  @override
-  void didUpdateWidget(covariant _YggdrasilProfileOption oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.profile.id != widget.profile.id ||
-        oldWidget.profile.skinUrl != widget.profile.skinUrl) {
-      _head = null;
-      _loadHead();
-    }
-  }
-
-  Future<void> _loadHead() async {
-    final skinUrl = widget.profile.skinUrl;
-    if (skinUrl == null || skinUrl.isEmpty || _loading) return;
-    _loading = true;
-    try {
-      final response = await http
-          .get(Uri.parse(skinUrl))
-          .timeout(const Duration(seconds: 10));
-      if (response.statusCode < 200 ||
-          response.statusCode >= 300 ||
-          response.bodyBytes.length > 4 * 1024 * 1024) {
-        return;
-      }
-      final head = await getIt<AccountAvatarCache>().ensureFromSkinPng(
-        widget.profile.id,
-        response.bodyBytes,
-        force: true,
-      );
-      if (mounted && head != null) {
-        setState(() => _head = head);
-      }
-    } catch (_) {
-      // A missing or unreachable skin uses the deterministic initials fallback.
-    } finally {
-      _loading = false;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = context.tokens;
-    final profile = widget.profile;
-    final head = _head;
-    return Material(
-      color:
-          widget.selected ? tokens.colorBrandHighlight : tokens.colorButtonBg,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: widget.onTap,
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: widget.selected
-                  ? tokens.colorBrand
-                  : tokens.colorSecondary.withValues(alpha: 0.22),
-            ),
-          ),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: head != null
-                    ? Image.memory(
-                        head,
-                        width: 44,
-                        height: 44,
-                        fit: BoxFit.cover,
-                        filterQuality: FilterQuality.none,
-                        gaplessPlayback: true,
-                      )
-                    : Container(
-                        width: 44,
-                        height: 44,
-                        alignment: Alignment.center,
-                        color: AccountAvatar.accentFor(
-                          profile.name,
-                          Theme.of(context).colorScheme,
-                        ),
-                        child: Text(
-                          AccountAvatar.initialFor(profile.name),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  profile.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: tokens.colorContrast,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              Icon(
-                widget.selected
-                    ? Icons.radio_button_checked
-                    : Icons.radio_button_off,
-                color: widget.selected
-                    ? tokens.colorBrand
-                    : tokens.colorBase.withValues(alpha: 0.45),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AccountTile extends StatefulWidget {
-  final rust.AccountDto account;
-  final String? serviceName;
-  final bool canRemove;
-  final VoidCallback onSelect;
-  final VoidCallback? onEdit;
-  final VoidCallback onRemove;
-
-  const _AccountTile({
-    required this.account,
-    this.serviceName,
-    required this.canRemove,
-    required this.onSelect,
-    this.onEdit,
-    required this.onRemove,
-  });
-
-  @override
-  State<_AccountTile> createState() => _AccountTileState();
-}
-
-class _AccountTileState extends State<_AccountTile> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = context.tokens;
-    final a = widget.account;
-    final selected = a.active;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: Material(
-          color: selected
-              ? tokens.colorBrandHighlight
-              : _hovered
-                  ? tokens.colorSuperRaisedBg
-                  : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: widget.onSelect,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
-              child: Row(
-                children: [
-                  Icon(
-                    selected
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
-                    size: 20,
-                    color: selected
-                        ? tokens.colorBrand
-                        : tokens.colorBase.withValues(alpha: 0.55),
-                  ),
-                  const SizedBox(width: 10),
-                  AccountAvatar(account: a, size: 36),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          a.username,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: tokens.colorContrast,
-                          ),
-                        ),
-                        Text(
-                          switch (a.kind) {
-                            'msa' => '微软账号',
-                            'yggdrasil' =>
-                              '${widget.serviceName ?? '外置登录'} · 外置账号',
-                            _ => '离线账号',
-                          },
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: tokens.colorBase.withValues(alpha: 0.65),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (widget.onEdit != null)
-                    IconButton(
-                      tooltip: '修改皮肤',
-                      onPressed: widget.onEdit,
-                      icon: Icon(
-                        Icons.edit_outlined,
-                        color: tokens.colorBrand,
-                      ),
-                    ),
-                  IconButton(
-                    tooltip: '删除',
-                    onPressed: widget.canRemove ? widget.onRemove : null,
-                    icon: Icon(
-                      Icons.delete_outline,
-                      color: widget.canRemove
-                          ? tokens.colorBase.withValues(alpha: 0.75)
-                          : tokens.colorBase.withValues(alpha: 0.25),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
         ),
       ),

@@ -3,16 +3,16 @@ import 'dart:async';
 import 'package:aml/src/app/di/service_locator.dart';
 import 'package:aml/src/app/state/navigation_state.dart';
 import 'package:aml/src/app/state/progress_state.dart';
-import 'package:aml/src/features/discover/data/curseforge_api.dart';
 import 'package:aml/src/features/discover/data/discover_ids.dart';
-import 'package:aml/src/features/discover/data/modrinth_api.dart';
 import 'package:aml/src/features/instances/application/instance_store.dart';
+import 'package:aml/src/features/instances/ui/instance_content_detail_sheet.dart';
+import 'package:aml/src/features/instances/ui/instance_content_row.dart';
+import 'package:aml/src/features/instances/ui/instance_content_version_sheet.dart';
 import 'package:aml/src/rust/api/launcher.dart' as rust;
 import 'package:aml/src/shared/theme/theme_token_access.dart';
 import 'package:aml/src/shared/utils/minecraft_labels.dart';
 import 'package:aml/src/shared/widgets/app_dialog_actions.dart';
 import 'package:aml/src/shared/widgets/app_messenger.dart';
-import 'package:aml/src/shared/widgets/components/cached_remote_image.dart';
 import 'package:aml/src/shared/widgets/components/navigation/nav_rect_button.dart';
 import 'package:flutter/material.dart';
 
@@ -382,34 +382,33 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                     addSemanticIndexes: false,
                     itemCount: filtered.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 6),
-                    itemBuilder: (context, index) {
+                    itemBuilder: (_, index) {
                       final mod = filtered[index];
                       return KeyedSubtree(
                         key: ValueKey(mod.relativePath),
-                        child: _contentRow(tokens, mod),
+                        child: InstanceContentRow(
+                          tokens: tokens,
+                          mod: mod,
+                          busy: _busy,
+                          updatingContentPaths: _updatingContentPaths,
+                          onShowDetail: () =>
+                              showInstanceContentDetailSheet(
+                                context: context,
+                                mod: mod,
+                              ),
+                          onToggleEnabled: (v) =>
+                              _toggleContentEnabled(mod, v),
+                          onDownloadMissing: () => _downloadMissingContent(mod),
+                          onUpdate: () => _updateContent(mod),
+                          onSwitchVersion: () => _switchContentVersion(mod),
+                          onDelete: () => _confirmDelete(mod),
+                        ),
                       );
                     },
                   ),
           ),
         ],
       ],
-    );
-  }
-
-  Widget _tooltipIconButton({
-    required String message,
-    required VoidCallback? onPressed,
-    required Widget icon,
-  }) {
-    // Windows AXTree breaks when Tooltip overlays are scrolled out of a ListView.
-    return Tooltip(
-      message: message,
-      excludeFromSemantics: true,
-      waitDuration: const Duration(milliseconds: 400),
-      child: IconButton(
-        onPressed: onPressed,
-        icon: icon,
-      ),
     );
   }
 
@@ -430,289 +429,18 @@ class InstanceContentTabState extends State<InstanceContentTab> {
     );
   }
 
-  Widget _contentRow(tokens, rust.ModFileDto mod) {
-    final title =
-        mod.projectTitle?.isNotEmpty == true ? mod.projectTitle! : mod.name;
-    final versionNumber = mod.versionNumber ?? mod.versionName;
-    final fileName = mod.name;
-    final author = mod.author;
-    final canOpenProject = mod.projectId != null && mod.projectId!.isNotEmpty;
-    final canOpenAuthor =
-        mod.authorId != null && mod.authorId!.trim().isNotEmpty;
-    final canSwitch = canOpenProject;
-
-    void openProject() {
-      if (canOpenProject) {
-        getIt<NavigationState>().openProject(mod.projectId!);
-      } else {
-        _showContentDetail(mod);
-      }
-    }
-
-    void openAuthor() {
-      final id = mod.authorId?.trim();
-      if (id == null || id.isEmpty) return;
-      final kind = (mod.authorType ?? 'user').toLowerCase() == 'organization'
-          ? 'organization'
-          : 'user';
-      getIt<NavigationState>().openAuthor(
-        id,
-        type: kind,
-        preview: AuthorPreview(
-          id: id,
-          type: kind,
-          displayName: author ?? id,
-          avatarUrl: mod.authorAvatarUrl,
-        ),
+  Future<void> _toggleContentEnabled(rust.ModFileDto mod, bool v) async {
+    try {
+      await rust.setModEnabled(
+        instanceId: widget.instanceId,
+        relativePath: mod.relativePath,
+        enabled: v,
       );
+      await _refreshContent(syncMetadata: false);
+    } catch (e) {
+      if (!mounted) return;
+      showAppSnackBar('$e', isError: true);
     }
-
-    return Material(
-      color: tokens.colorRaisedBg,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: openProject,
-        hoverColor: tokens.colorSuperRaisedBg.withValues(alpha: 0.65),
-        splashColor: tokens.colorBrand.withValues(alpha: 0.12),
-        highlightColor: tokens.colorBrand.withValues(alpha: 0.06),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 5,
-                child: Row(
-                  children: [
-                    ExcludeSemantics(
-                      child: mod.projectIconUrl != null &&
-                              mod.projectIconUrl!.isNotEmpty
-                          ? CachedRemoteImage(
-                              url: mod.projectIconUrl!,
-                              width: 40,
-                              height: 40,
-                              borderRadius: BorderRadius.circular(8),
-                              placeholder: _iconFallback(tokens),
-                              error: _iconFallback(tokens),
-                            )
-                          : _iconFallback(tokens),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: tokens.colorContrast,
-                              decoration: !mod.isMissing && !mod.enabled
-                                  ? TextDecoration.lineThrough
-                                  : null,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          if (!mod.isMissing && author != null && author.isNotEmpty)
-                            GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: canOpenAuthor ? openAuthor : null,
-                              child: MouseRegion(
-                                cursor: canOpenAuthor
-                                    ? SystemMouseCursors.click
-                                    : SystemMouseCursors.basic,
-                                child: Row(
-                                  children: [
-                                    if (mod.authorAvatarUrl != null &&
-                                        mod.authorAvatarUrl!.isNotEmpty)
-                                      Padding(
-                                        padding:
-                                            const EdgeInsets.only(right: 6),
-                                        child: CachedRemoteImage(
-                                          url: mod.authorAvatarUrl!,
-                                          width: 14,
-                                          height: 14,
-                                          borderRadius:
-                                              BorderRadius.circular(7),
-                                          placeholder: const SizedBox.shrink(),
-                                          error: const SizedBox.shrink(),
-                                        ),
-                                      ),
-                                    Flexible(
-                                      child: Text(
-                                        author,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: tokens.colorBase
-                                              .withValues(alpha: 0.7),
-                                          decoration: canOpenAuthor
-                                              ? TextDecoration.underline
-                                              : null,
-                                          decorationColor: tokens.colorBase
-                                              .withValues(alpha: 0.35),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            )
-                          else
-                            Text(
-                              mod.isMissing
-                                  ? '未下载 · ${contentTypeLabel(mod.projectType)}'
-                                  : mod.projectId == null
-                                      ? '本地文件 · ${contentTypeLabel(mod.projectType)}'
-                                      : '${sourceLabel(contentSourceOf(projectId: mod.projectId))} · ${contentTypeLabel(mod.projectType)}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: tokens.colorBase.withValues(alpha: 0.65),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                flex: 4,
-                // Absorb taps so version area does not open project; switch via button only.
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {},
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        versionNumber ?? '未知版本',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: tokens.colorContrast,
-                        ),
-                      ),
-                      Text(
-                        [
-                          if (mod.projectId != null)
-                            sourceLabel(
-                              contentSourceOf(projectId: mod.projectId),
-                            ),
-                          fileName,
-                        ].join(' · '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: tokens.colorBase.withValues(alpha: 0.65),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: mod.isMissing ? 196 : 168,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (mod.isMissing)
-                      TextButton.icon(
-                        onPressed: _busy
-                            ? null
-                            : () => _downloadMissingContent(mod),
-                        icon: _updatingContentPaths.contains(mod.relativePath)
-                            ? SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: tokens.colorBrand,
-                                ),
-                              )
-                            : Icon(
-                                Icons.download_rounded,
-                                size: 18,
-                                color: tokens.colorBrand,
-                              ),
-                        label: Text(
-                          '下载',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: tokens.colorBrand,
-                          ),
-                        ),
-                      )
-                    else if (mod.hasUpdate)
-                      _tooltipIconButton(
-                        message: '更新',
-                        onPressed: _busy ? null : () => _updateContent(mod),
-                        icon: _updatingContentPaths.contains(mod.relativePath)
-                            ? SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: tokens.colorBrand,
-                                ),
-                              )
-                            : Icon(
-                                Icons.download_rounded,
-                                color: tokens.colorBrand,
-                              ),
-                      )
-                    else if (canSwitch)
-                      _tooltipIconButton(
-                        message: '切换版本',
-                        onPressed:
-                            _busy ? null : () => _switchContentVersion(mod),
-                        icon: Icon(
-                          Icons.swap_horiz_rounded,
-                          color: tokens.colorBase.withValues(alpha: 0.85),
-                        ),
-                      ),
-                    if (!mod.isMissing)
-                      Switch(
-                        value: mod.enabled,
-                        activeThumbColor: tokens.colorOnBrand,
-                        activeTrackColor: tokens.colorBrand,
-                        onChanged: (v) async {
-                          try {
-                            await rust.setModEnabled(
-                              instanceId: widget.instanceId,
-                              relativePath: mod.relativePath,
-                              enabled: v,
-                            );
-                            await _refreshContent(syncMetadata: false);
-                          } catch (e) {
-                            if (!mounted) return;
-                            showAppSnackBar('$e', isError: true);
-                          }
-                        },
-                      ),
-                    _tooltipIconButton(
-                      message: '删除',
-                      onPressed: () => _confirmDelete(mod),
-                      icon: Icon(
-                        Icons.delete_outline,
-                        color: tokens.colorBase.withValues(alpha: 0.85),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Future<void> _downloadMissingContent(rust.ModFileDto mod) async {
@@ -911,116 +639,12 @@ class InstanceContentTabState extends State<InstanceContentTab> {
   }
 
   Future<void> _switchContentVersion(rust.ModFileDto mod) async {
-    final projectId = mod.projectId;
-    if (projectId == null || projectId.isEmpty) return;
     final instance = _instance;
     if (instance == null) return;
-    final isCf = isCurseForgeProjectId(projectId);
-    final cfModId = parseCurseForgeModId(projectId);
-
-    showDialog<void>(
+    final selected = await pickInstanceContentVersion(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-    List<ModrinthVersionInfo> versions;
-    try {
-      if (isCf && cfModId != null) {
-        versions = await CurseForgeApiService.getProjectVersionsAsModrinth(
-          cfModId,
-          gameVersion: instance.gameVersion,
-          loader: instance.loader.toLowerCase() == 'vanilla'
-              ? null
-              : instance.loader,
-        );
-      } else {
-        versions = await ModrinthApiService.getProjectVersions(
-          projectId,
-          gameVersion: instance.gameVersion,
-          loader: instance.loader.toLowerCase() == 'vanilla'
-              ? null
-              : instance.loader,
-        );
-      }
-    } catch (e) {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-      if (mounted) showAppSnackBar('加载版本失败: $e', isError: true);
-      return;
-    }
-    if (!mounted) return;
-    Navigator.of(context, rootNavigator: true).pop();
-
-    if (versions.isEmpty) {
-      showAppSnackBar('没有兼容的版本', isError: true);
-      return;
-    }
-
-    final selected = await showModalBottomSheet<ModrinthVersionInfo>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: context.tokens.colorRaisedBg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        final tokens = ctx.tokens;
-        final source = sourceLabel(contentSourceOf(projectId: projectId));
-        return SafeArea(
-          child: SizedBox(
-            height: MediaQuery.of(ctx).size.height * 0.6,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Text(
-                    '切换版本 · $source · ${mod.projectTitle ?? mod.name}',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: tokens.colorContrast,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: versions.length,
-                    separatorBuilder: (_, __) => Divider(
-                      height: 1,
-                      color: tokens.colorSecondary.withValues(alpha: 0.25),
-                    ),
-                    itemBuilder: (context, index) {
-                      final v = versions[index];
-                      final current = v.id == mod.versionId;
-                      return ListTile(
-                        selected: current,
-                        title: Text(
-                          v.versionNumber.isNotEmpty ? v.versionNumber : v.name,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: tokens.colorContrast,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '${v.versionType} · ${v.loaders.join(", ")}'
-                          '${current ? " · 当前" : ""}',
-                          style: TextStyle(
-                            color: tokens.colorBase.withValues(alpha: 0.7),
-                          ),
-                        ),
-                        trailing: current
-                            ? Icon(Icons.check, color: tokens.colorBrand)
-                            : null,
-                        onTap: current ? null : () => Navigator.pop(ctx, v),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      mod: mod,
+      instance: instance,
     );
     if (selected == null || !mounted) return;
 
@@ -1044,15 +668,6 @@ class InstanceContentTabState extends State<InstanceContentTab> {
         });
       }
     }
-  }
-
-  Widget _iconFallback(tokens) {
-    return Container(
-      width: 40,
-      height: 40,
-      color: tokens.colorSuperRaisedBg,
-      child: Icon(Icons.extension, color: tokens.colorContrast),
-    );
   }
 
   Future<void> _confirmDelete(rust.ModFileDto mod) async {
@@ -1088,144 +703,5 @@ class InstanceContentTabState extends State<InstanceContentTab> {
       if (!mounted) return;
       showAppSnackBar('$e', isError: true);
     }
-  }
-
-  void _showContentDetail(rust.ModFileDto mod) {
-    final tokens = context.tokens;
-    final title =
-        mod.projectTitle?.isNotEmpty == true ? mod.projectTitle! : mod.name;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: tokens.colorRaisedBg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  if (mod.projectIconUrl != null &&
-                      mod.projectIconUrl!.isNotEmpty)
-                    CachedRemoteImage(
-                      url: mod.projectIconUrl!,
-                      width: 48,
-                      height: 48,
-                      borderRadius: BorderRadius.circular(10),
-                      placeholder: Icon(
-                        Icons.extension,
-                        size: 48,
-                        color: tokens.colorContrast,
-                      ),
-                      error: Icon(
-                        Icons.extension,
-                        size: 48,
-                        color: tokens.colorContrast,
-                      ),
-                    )
-                  else
-                    Icon(Icons.extension,
-                        size: 48, color: tokens.colorContrast),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: tokens.colorContrast,
-                          ),
-                        ),
-                        Text(
-                          mod.projectType,
-                          style: TextStyle(
-                            color: tokens.colorBase.withValues(alpha: 0.7),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              _detailRow(tokens, '文件', mod.name),
-              _detailRow(tokens, '路径', mod.relativePath),
-              if (mod.versionNumber != null)
-                _detailRow(tokens, '版本号', mod.versionNumber!),
-              if (mod.versionName != null)
-                _detailRow(tokens, '版本名', mod.versionName!),
-              if (mod.versionId != null)
-                _detailRow(tokens, 'Version ID', mod.versionId!),
-              if (mod.projectId != null) ...[
-                _detailRow(tokens, 'Project ID', mod.projectId!),
-                _detailRow(
-                  tokens,
-                  '来源',
-                  sourceLabel(contentSourceOf(projectId: mod.projectId)),
-                ),
-              ],
-              _detailRow(
-                tokens,
-                '大小',
-                '${(mod.sizeBytes.toDouble() / 1024).toStringAsFixed(1)} KB',
-              ),
-              _detailRow(tokens, '状态', mod.enabled ? '已启用' : '已禁用'),
-              if (mod.projectId != null) ...[
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: tokens.colorBrand,
-                      foregroundColor: tokens.colorOnBrand,
-                      elevation: 0,
-                    ),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      getIt<NavigationState>().openProject(mod.projectId!);
-                    },
-                    child: const Text('查看详情'),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _detailRow(tokens, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 88,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: tokens.colorBase.withValues(alpha: 0.7),
-              ),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value,
-              style: TextStyle(color: tokens.colorContrast),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }

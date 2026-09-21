@@ -137,3 +137,100 @@ pub async fn duplicate_instance(source_id: &str) -> Result<Instance> {
 
     db::get_instance(&state.pool, &created.id).await
 }
+
+/// Tri-state field update: `None` keeps the current value, `Some(None)`
+/// clears it, `Some(Some(v))` sets it.
+pub struct InstanceSettingsUpdate {
+    pub name: Option<String>,
+    pub java_path: Option<Option<String>>,
+    pub memory_mb: Option<Option<i64>>,
+    pub extra_jvm_args: Option<Option<String>>,
+    pub window_width: Option<Option<i64>>,
+    pub window_height: Option<Option<i64>>,
+    pub fullscreen: Option<Option<bool>>,
+    pub environment_vars: Option<Option<String>>,
+    pub pre_launch_command: Option<Option<String>>,
+    pub wrapper_command: Option<Option<String>>,
+    pub post_exit_command: Option<Option<String>>,
+    pub update_channel: Option<String>,
+}
+
+/// Validate and persist instance settings (name / java / memory / JVM args /
+/// window / hooks / update channel). Returns the refreshed instance.
+pub async fn update_instance_settings(
+    id: &str,
+    update: InstanceSettingsUpdate,
+) -> Result<Instance> {
+    let InstanceSettingsUpdate {
+        name,
+        java_path,
+        memory_mb,
+        extra_jvm_args,
+        window_width,
+        window_height,
+        fullscreen,
+        environment_vars,
+        pre_launch_command,
+        wrapper_command,
+        post_exit_command,
+        update_channel,
+    } = update;
+
+    let state = try_state()?;
+    let name = name
+        .map(|value| value.trim().chars().take(80).collect::<String>())
+        .filter(|value| !value.is_empty());
+    if let Some(ref value) = name {
+        rename_instance(id, value).await?;
+    }
+    if let Some(Some(value)) = memory_mb {
+        if !(512..=131_072).contains(&value) {
+            bail!("内存必须介于 512 MB 和 131072 MB 之间");
+        }
+    }
+    for (label, value) in [("窗口宽度", window_width), ("窗口高度", window_height)] {
+        if let Some(Some(value)) = value {
+            if !(320..=16_384).contains(&value) {
+                bail!("{label}必须介于 320 和 16384 之间");
+            }
+        }
+    }
+
+    db::update_instance(&state.pool, id, None, java_path, memory_mb, extra_jvm_args, None)
+        .await?;
+    db::update_instance_launch_settings(
+        &state.pool,
+        id,
+        window_width,
+        window_height,
+        fullscreen,
+        environment_vars,
+        pre_launch_command,
+        wrapper_command,
+        post_exit_command,
+    )
+    .await?;
+
+    if let Some(channel) = update_channel {
+        db::set_instance_update_channel(
+            &state.pool,
+            id,
+            crate::state::models::UpdateChannel::parse(&channel),
+        )
+        .await?;
+    }
+
+    db::get_instance(&state.pool, id).await
+}
+
+/// Remove an instance from the DB and delete its on-disk folder.
+pub async fn remove_instance(id: &str) -> Result<()> {
+    let state = try_state()?;
+    let resource = resource_dir().await?;
+    let instance = db::remove_instance(&state.pool, id).await?;
+    let dir = dirs::instance_dir(&resource, &instance.path);
+    if dir.exists() {
+        tokio::fs::remove_dir_all(&dir).await?;
+    }
+    Ok(())
+}

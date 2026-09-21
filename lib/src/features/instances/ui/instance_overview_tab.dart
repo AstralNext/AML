@@ -1,20 +1,17 @@
+import 'dart:async';
+
+import 'package:aml/src/app/di/service_locator.dart';
+import 'package:aml/src/features/instances/application/account_store.dart';
 import 'package:aml/src/features/instances/application/instance_play_stats.dart';
+import 'package:aml/src/features/instances/application/instance_screenshots.dart';
+import 'package:aml/src/features/instances/application/instance_store.dart';
+import 'package:aml/src/rust/api/launcher.dart' as rust;
 import 'package:aml/src/shared/theme/app_theme_tokens.dart';
 import 'package:aml/src/shared/widgets/components/cached_remote_image.dart';
+import 'package:aml/src/shared/widgets/components/common/image_lightbox.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-
-class InstanceOverviewScreenshot {
-  const InstanceOverviewScreenshot({
-    required this.path,
-    required this.name,
-    this.modified,
-  });
-
-  final String path;
-  final String name;
-  final DateTime? modified;
-}
+import 'package:signals_flutter/signals_flutter.dart';
 
 class _RecentScreenshotsCarousel extends StatefulWidget {
   const _RecentScreenshotsCarousel({
@@ -23,7 +20,7 @@ class _RecentScreenshotsCarousel extends StatefulWidget {
     required this.onOpenScreenshot,
   });
 
-  final List<InstanceOverviewScreenshot> screenshots;
+  final List<InstanceScreenshotEntry> screenshots;
   final AppThemeTokens tokens;
   final void Function(int index) onOpenScreenshot;
 
@@ -162,7 +159,7 @@ class _ScreenshotCarouselItem extends StatelessWidget {
     required this.tokens,
   });
 
-  final InstanceOverviewScreenshot shot;
+  final InstanceScreenshotEntry shot;
   final AppThemeTokens tokens;
 
   @override
@@ -247,38 +244,128 @@ class _CarouselArrowButton extends StatelessWidget {
   }
 }
 
-class InstanceOverviewTab extends StatelessWidget {
+/// 实例详情页「概览」标签页：自加载游玩统计与最近截图。
+class InstanceOverviewTab extends StatefulWidget {
   const InstanceOverviewTab({
     super.key,
     required this.tokens,
-    required this.stats,
-    required this.statsLoading,
-    required this.screenshots,
-    required this.screenshotsLoading,
-    required this.onRefresh,
-    required this.onOpenScreenshot,
+    required this.instanceId,
     required this.onSeeAllScreenshots,
-    this.playerName,
   });
 
   final AppThemeTokens tokens;
-  final InstancePlayStats? stats;
-  final bool statsLoading;
-  final List<InstanceOverviewScreenshot> screenshots;
-  final bool screenshotsLoading;
-  final VoidCallback onRefresh;
-  final void Function(int index) onOpenScreenshot;
+  final String instanceId;
   final VoidCallback onSeeAllScreenshots;
-  final String? playerName;
+
+  @override
+  State<InstanceOverviewTab> createState() => _InstanceOverviewTabState();
+}
+
+class _InstanceOverviewTabState extends State<InstanceOverviewTab> {
+  String? _instanceRoot;
+  InstancePlayStats? _stats;
+  bool _statsLoading = false;
+  List<InstanceScreenshotEntry> _screenshots = [];
+  bool _screenshotsLoading = false;
+  VoidCallback? _disposeRunningEffect;
+
+  InstanceStore get _store => getIt<InstanceStore>();
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refresh());
+    var wasRunning = _store.isRunning(widget.instanceId);
+    _disposeRunningEffect = effect(() {
+      final running = _store.isRunning(widget.instanceId);
+      if (wasRunning && !running) {
+        unawaited(_refresh());
+      }
+      wasRunning = running;
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposeRunningEffect?.call();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    await Future.wait([
+      _refreshScreenshots(),
+      _refreshStats(),
+    ]);
+  }
+
+  Future<void> _refreshStats() async {
+    setState(() => _statsLoading = true);
+    try {
+      final root = _instanceRoot ??
+          await rust.openInstanceFolder(instanceId: widget.instanceId);
+      final account = getIt<AccountStore>().activeAccount;
+      final stats = await InstancePlayStats.load(
+        root,
+        preferUuid: account?.uuid,
+      );
+      if (!mounted) return;
+      setState(() {
+        _instanceRoot = root;
+        _stats = stats;
+        _statsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _statsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshScreenshots() async {
+    setState(() => _screenshotsLoading = true);
+    try {
+      final root = _instanceRoot ??
+          await rust.openInstanceFolder(instanceId: widget.instanceId);
+      final entries = await scanInstanceScreenshots(root);
+      if (!mounted) return;
+      setState(() {
+        _instanceRoot = root;
+        _screenshots = entries;
+        _screenshotsLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _screenshotsLoading = false;
+      });
+    }
+  }
+
+  void _openScreenshot(int index) {
+    final paths = _screenshots.map((e) => e.path).toList();
+    final titles = _screenshots.map((e) => e.name).toList();
+    unawaited(
+      showImageLightbox(
+        context,
+        urls: paths,
+        initialIndex: index,
+        titles: titles,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final recent = screenshots.take(8).toList();
-    final hasStats = stats != null && !stats!.isEmpty;
-    final aggregated = hasStats ? stats!.aggregated : null;
+    final tokens = widget.tokens;
+    final recent = _screenshots.take(8).toList();
+    final stats = _stats;
+    final hasStats = stats != null && !stats.isEmpty;
+    final aggregated = hasStats ? stats.aggregated : null;
+    final playerName = getIt<AccountStore>().activeAccount?.username;
 
     return RefreshIndicator(
-      onRefresh: () async => onRefresh(),
+      onRefresh: () async => _refresh(),
       child: ListView(
         padding: const EdgeInsets.only(bottom: 8),
         children: [
@@ -293,7 +380,7 @@ class InstanceOverviewTab extends StatelessWidget {
               ),
               const Spacer(),
               TextButton.icon(
-                onPressed: onRefresh,
+                onPressed: () => unawaited(_refresh()),
                 icon: const Icon(Icons.refresh, size: 16),
                 label: const Text('刷新'),
                 style: TextButton.styleFrom(
@@ -305,7 +392,7 @@ class InstanceOverviewTab extends StatelessWidget {
           const SizedBox(height: 4),
           _sectionTitle(tokens, '最近截图'),
           const SizedBox(height: 8),
-          if (screenshotsLoading && recent.isEmpty)
+          if (_screenshotsLoading && recent.isEmpty)
             const SizedBox(
               height: 120,
               child: Center(child: CircularProgressIndicator()),
@@ -321,16 +408,16 @@ class InstanceOverviewTab extends StatelessWidget {
             _RecentScreenshotsCarousel(
               screenshots: recent,
               tokens: tokens,
-              onOpenScreenshot: onOpenScreenshot,
+              onOpenScreenshot: _openScreenshot,
             ),
-            if (screenshots.length > recent.length) ...[
+            if (_screenshots.length > recent.length) ...[
               const SizedBox(height: 6),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
-                  onPressed: onSeeAllScreenshots,
+                  onPressed: widget.onSeeAllScreenshots,
                   child: Text(
-                    '查看全部 ${screenshots.length} 张',
+                    '查看全部 ${_screenshots.length} 张',
                     style: TextStyle(color: tokens.colorBrand),
                   ),
                 ),
@@ -341,9 +428,9 @@ class InstanceOverviewTab extends StatelessWidget {
           _sectionTitle(
             tokens,
             '游玩数据',
-            trailing: playerName != null && playerName!.isNotEmpty
+            trailing: playerName != null && playerName.isNotEmpty
                 ? Text(
-                    playerName!,
+                    playerName,
                     style: TextStyle(
                       fontSize: 12,
                       color: tokens.colorBase.withValues(alpha: 0.65),
@@ -352,7 +439,7 @@ class InstanceOverviewTab extends StatelessWidget {
                 : null,
           ),
           const SizedBox(height: 8),
-          if (statsLoading && stats == null)
+          if (_statsLoading && stats == null)
             const SizedBox(
               height: 120,
               child: Center(child: CircularProgressIndicator()),
@@ -381,7 +468,7 @@ class InstanceOverviewTab extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '数据来自 stats JSON 文件${playerName != null && playerName!.isNotEmpty ? '（优先当前账号）' : ''}，跨所有单人世界汇总。',
+              '数据来自 stats JSON 文件${playerName != null && playerName.isNotEmpty ? '（优先当前账号）' : ''}，跨所有单人世界汇总。',
               style: TextStyle(
                 fontSize: 11,
                 color: tokens.colorBase.withValues(alpha: 0.5),

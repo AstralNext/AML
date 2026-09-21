@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use futures::stream::{FuturesUnordered, StreamExt};
-use serde::Deserialize;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,16 +11,20 @@ use crate::launcher::download::{ProgressFn, PACK_DOWNLOAD_CONCURRENCY};
 use crate::launcher::install;
 use crate::launcher::progress;
 use crate::state::db;
-use crate::state::models::{CreateInstanceRequest, InstallStage, Instance, ModLoader};
+use crate::state::models::{CreateInstanceRequest, InstallStage, Instance};
 use crate::state::{resource_dir, try_state};
 
 use super::curseforge::{
-    content_relative_path, download_cf_file, extract_named_overrides, parse_manifest_json,
-    read_cf_meta_from_zip, resolve_file_downloads, CfFileRef, CfPackMeta,
+    content_relative_path, download_cf_file, extract_named_overrides, read_cf_meta_from_zip,
+    resolve_file_downloads, CfFileRef, CfPackMeta,
 };
 use super::detect::{detect_pack_bytes, read_zip_entry, PackKind};
 use super::export_common::{PackContentCategory, PackContentFile};
-use super::mmc::{extract_mmc_minecraft, read_mmc_meta_from_dir, read_mmc_meta_from_zip};
+use super::import_curseforge::install_curse_like;
+use super::import_mcbbs::{install_mcbbs, read_mcbbs_meta, McbbsPackmeta};
+use super::import_mmc::install_multimc_zip;
+use super::import_mrpack::install_mrpack_zip;
+use super::mmc::read_mmc_meta_from_zip;
 
 #[derive(Debug, Clone)]
 pub struct PackImportPreview {
@@ -298,69 +301,16 @@ pub async fn create_instance_from_pack_file_resumable(
 
     match kind {
         PackKind::Mrpack => {
-            let state = try_state()?;
-            let created = if let Some(id) = resume_instance_id {
-                report(0.08, format!("Resuming instance {id}…"));
-                report(0.08, format!("__INSTANCE_CREATED__:{id}"));
-                db::set_install_stage(&state.pool, id, InstallStage::Installing).await?;
-                db::get_instance(&state.pool, id).await?
-            } else {
-                let mut archive = ZipArchive::new(Cursor::new(&data))?;
-                let text = read_zip_entry(&mut archive, "modrinth.index.json")?;
-                let v: serde_json::Value = serde_json::from_str(&text)?;
-                let pack_name = name.or_else(|| {
-                    v.get("name")
-                        .and_then(|x| x.as_str())
-                        .map(|s| s.to_string())
-                });
-                let deps = v.get("dependencies").cloned().unwrap_or_default();
-                let game_version = deps
-                    .get("minecraft")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("1.20.1")
-                    .to_string();
-                let (loader, loader_version) = if let Some(v) = deps.get("fabric-loader") {
-                    (ModLoader::Fabric, v.as_str().map(|s| s.to_string()))
-                } else if let Some(v) = deps.get("quilt-loader") {
-                    (ModLoader::Quilt, v.as_str().map(|s| s.to_string()))
-                } else if let Some(v) = deps.get("forge") {
-                    (ModLoader::Forge, v.as_str().map(|s| s.to_string()))
-                } else if let Some(v) = deps.get("neoforge").or_else(|| deps.get("neo-forge")) {
-                    (ModLoader::NeoForge, v.as_str().map(|s| s.to_string()))
-                } else {
-                    (ModLoader::Vanilla, None)
-                };
-
-                let created = db::create_instance(
-                    &state.pool,
-                    CreateInstanceRequest {
-                        name: pack_name.unwrap_or_else(|| {
-                            path.file_stem()
-                                .map(|s| s.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| "Imported Pack".into())
-                        }),
-                        game_version,
-                        loader,
-                        loader_version,
-                        icon: None,
-                    },
-                )
-                .await?;
-                report(0.08, format!("__INSTANCE_CREATED__:{}", created.id));
-                created
-            };
-            let install_result = super::super::content::install_mrpack(
-                &created.id,
+            install_mrpack_zip(
+                &data,
+                &path,
                 pack_path,
+                name,
                 java_path,
+                resume_instance_id,
                 on_progress,
             )
-            .await;
-            if let Err(e) = install_result {
-                let _ = db::set_install_stage(&state.pool, &created.id, InstallStage::Failed).await;
-                return Err(e);
-            }
-            db::get_instance(&state.pool, &created.id).await
+            .await
         }
         PackKind::CurseForge => {
             install_curse_like(
@@ -382,29 +332,7 @@ pub async fn create_instance_from_pack_file_resumable(
     }
 }
 
-async fn install_curse_like(
-    data: &[u8],
-    name: Option<String>,
-    java_path: Option<String>,
-    on_progress: Option<ProgressFn>,
-    source: &str,
-    resume_instance_id: Option<&str>,
-) -> Result<Instance> {
-    let (meta, zip_prefix) = read_cf_meta_from_zip(data)?;
-    install_from_cf_meta(
-        data,
-        meta,
-        zip_prefix,
-        name,
-        java_path,
-        on_progress,
-        source,
-        resume_instance_id,
-    )
-    .await
-}
-
-async fn install_from_cf_meta(
+pub(super) async fn install_from_cf_meta(
     data: &[u8],
     meta: CfPackMeta,
     zip_prefix: String,
@@ -628,340 +556,6 @@ async fn install_from_cf_meta(
     }
 
     db::get_instance(&state.pool, &created.id).await
-}
-
-#[derive(Debug, Clone)]
-struct McbbsMeta {
-    name: String,
-    game_version: String,
-    loader: ModLoader,
-    loader_version: Option<String>,
-    files: Vec<CfFileRef>,
-    overrides: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct McbbsPackmeta {
-    name: Option<String>,
-    #[serde(default)]
-    version: Option<String>,
-    #[serde(default)]
-    files: Vec<McbbsFile>,
-    #[serde(default)]
-    addons: Vec<McbbsAddon>,
-    #[serde(default)]
-    overrides: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct McbbsFile {
-    #[serde(default, rename = "type")]
-    file_type: Option<String>,
-    #[serde(default, rename = "projectID")]
-    project_id: Option<u64>,
-    #[serde(default, rename = "fileID")]
-    file_id: Option<u64>,
-    #[serde(default)]
-    file_name: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    force: Option<bool>,
-}
-
-#[derive(Deserialize)]
-struct McbbsAddon {
-    id: String,
-    version: String,
-}
-
-fn read_mcbbs_meta(data: &[u8]) -> Result<(McbbsMeta, String)> {
-    use super::detect::zip_entry_prefix;
-    let mut archive = ZipArchive::new(Cursor::new(data))?;
-    let zip_prefix = zip_entry_prefix(&mut archive, "mcbbs.packmeta");
-    let text = read_zip_entry(&mut archive, "mcbbs.packmeta")?;
-    let pack: McbbsPackmeta =
-        serde_json::from_str(&text).context("解析 mcbbs.packmeta 失败")?;
-
-    let mut game_version = String::new();
-    let mut loader = ModLoader::Vanilla;
-    let mut loader_version = None;
-    for addon in &pack.addons {
-        let id = addon.id.to_lowercase();
-        if id == "game" || id == "minecraft" {
-            game_version = addon.version.clone();
-        } else if id.contains("fabric") {
-            loader = ModLoader::Fabric;
-            loader_version = Some(addon.version.clone());
-        } else if id.contains("quilt") {
-            loader = ModLoader::Quilt;
-            loader_version = Some(addon.version.clone());
-        } else if id.contains("neoforge") {
-            loader = ModLoader::NeoForge;
-            loader_version = Some(addon.version.clone());
-        } else if id.contains("forge") {
-            loader = ModLoader::Forge;
-            loader_version = Some(addon.version.clone());
-        }
-    }
-
-    if game_version.is_empty() {
-        if let Ok(manifest_text) = read_zip_entry(&mut archive, "manifest.json") {
-            if let Ok(cf) = parse_manifest_json(&manifest_text) {
-                game_version = cf.game_version;
-                loader = cf.loader;
-                loader_version = cf.loader_version;
-            }
-        }
-    }
-    if game_version.is_empty() {
-        anyhow::bail!("mcbbs.packmeta 缺少游戏版本");
-    }
-
-    let mut files = Vec::new();
-    for f in pack.files {
-        let is_curse = f
-            .file_type
-            .as_deref()
-            .map(|t| t.eq_ignore_ascii_case("curse") || t.eq_ignore_ascii_case("addon"))
-            .unwrap_or(f.project_id.is_some() && f.file_id.is_some());
-        if is_curse {
-            if let (Some(project_id), Some(file_id)) = (f.project_id, f.file_id) {
-                files.push(CfFileRef {
-                    project_id,
-                    file_id,
-                    required: f.force.unwrap_or(true),
-                    file_name: f.file_name,
-                    url: f.url,
-                });
-            }
-        } else if let Some(url) = f.url {
-            files.push(CfFileRef {
-                project_id: 0,
-                file_id: files.len() as u64 + 1,
-                required: true,
-                file_name: f.file_name,
-                url: Some(url),
-            });
-        }
-    }
-
-    if files.is_empty() {
-        if let Ok(manifest_text) = read_zip_entry(&mut archive, "manifest.json") {
-            if let Ok(cf) = parse_manifest_json(&manifest_text) {
-                files = cf.files;
-            }
-        }
-    }
-
-    Ok((
-        McbbsMeta {
-            name: pack
-                .name
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "MCBBS Pack".into()),
-            game_version,
-            loader,
-            loader_version,
-            files,
-            overrides: pack
-                .overrides
-                .unwrap_or_else(|| "overrides".into())
-                .trim_matches('/')
-                .to_string(),
-        },
-        zip_prefix,
-    ))
-}
-
-async fn install_mcbbs(
-    data: &[u8],
-    name: Option<String>,
-    java_path: Option<String>,
-    on_progress: Option<ProgressFn>,
-    resume_instance_id: Option<&str>,
-) -> Result<Instance> {
-    let (meta, zip_prefix) = read_mcbbs_meta(data)?;
-    let cf = CfPackMeta {
-        name: meta.name,
-        version: None,
-        author: None,
-        game_version: meta.game_version,
-        loader: meta.loader,
-        loader_version: meta.loader_version,
-        overrides: meta.overrides,
-        files: meta.files,
-    };
-    install_from_cf_meta(
-        data,
-        cf,
-        zip_prefix,
-        name,
-        java_path,
-        on_progress,
-        "mcbbs",
-        resume_instance_id,
-    )
-    .await
-}
-
-async fn install_multimc_zip(
-    data: &[u8],
-    name: Option<String>,
-    java_path: Option<String>,
-    on_progress: Option<ProgressFn>,
-    resume_instance_id: Option<&str>,
-) -> Result<Instance> {
-    let state = try_state()?;
-    let resource = resource_dir().await?;
-    let report = |p: f64, msg: String| {
-        if let Some(cb) = &on_progress {
-            cb(p, msg);
-        }
-    };
-
-    let meta = read_mmc_meta_from_zip(data)?;
-    let instance_name = name.unwrap_or_else(|| meta.name.clone());
-    let created = if let Some(id) = resume_instance_id {
-        report(0.08, format!("Resuming instance {id}…"));
-        report(0.10, format!("__INSTANCE_CREATED__:{id}"));
-        db::set_install_stage(&state.pool, id, InstallStage::Installing).await?;
-        db::get_instance(&state.pool, id).await?
-    } else {
-        report(0.08, format!("Creating instance {instance_name}…"));
-        let created = db::create_instance(
-            &state.pool,
-            CreateInstanceRequest {
-                name: instance_name.clone(),
-                game_version: meta.game_version.clone(),
-                loader: meta.loader,
-                loader_version: meta.loader_version.clone(),
-                icon: None,
-            },
-        )
-        .await?;
-        report(0.10, format!("__INSTANCE_CREATED__:{}", created.id));
-        db::set_install_stage(&state.pool, &created.id, InstallStage::Installing).await?;
-        created
-    };
-    let instance_dir = dirs::ensure_instance_dir(&resource, &created.path).await?;
-
-    report(0.20, "Copying instance files…".into());
-    extract_mmc_minecraft(data, &instance_dir, &meta.minecraft_prefix)?;
-
-    report(0.78, "Installing Minecraft + loader…".into());
-    install::install_instance(
-        &created.id,
-        java_path,
-        false,
-        progress::nest_progress(
-            on_progress.clone(),
-            0.78,
-            0.95,
-            "Installing Minecraft + loader",
-        ),
-    )
-    .await?;
-    report(0.95, "Indexing installed content…".into());
-    let _ = crate::launcher::content::sync_instance_content_metadata(&created.id, false).await;
-    let _ = db::set_instance_modpack_link(
-        &state.pool,
-        &created.id,
-        None,
-        None,
-        None,
-        Some("multimc"),
-        Some(&instance_name),
-    )
-    .await;
-    report(1.0, "Modpack installed".into());
-    db::get_instance(&state.pool, &created.id).await
-}
-
-/// Import a MultiMC instance folder into a new AML instance.
-pub async fn create_instance_from_mmc_folder(
-    instance_folder: &str,
-    name: Option<String>,
-    java_path: Option<String>,
-    on_progress: Option<ProgressFn>,
-) -> Result<Instance> {
-    let state = try_state()?;
-    let resource = resource_dir().await?;
-    let report = |p: f64, msg: String| {
-        if let Some(cb) = &on_progress {
-            cb(p, msg);
-        }
-    };
-    let folder = PathBuf::from(instance_folder);
-    let (meta, minecraft_dir) = read_mmc_meta_from_dir(&folder)?;
-    let instance_name = name.unwrap_or_else(|| meta.name.clone());
-    report(0.08, format!("Creating instance {instance_name}…"));
-    let created = db::create_instance(
-        &state.pool,
-        CreateInstanceRequest {
-            name: instance_name.clone(),
-            game_version: meta.game_version,
-            loader: meta.loader,
-            loader_version: meta.loader_version,
-            icon: None,
-        },
-    )
-    .await?;
-    report(0.10, format!("__INSTANCE_CREATED__:{}", created.id));
-    let instance_dir = dirs::ensure_instance_dir(&resource, &created.path).await?;
-    report(0.20, "Copying instance files…".into());
-    copy_dir_recursive(&minecraft_dir, &instance_dir).await?;
-    report(0.78, "Installing Minecraft + loader…".into());
-    install::install_instance(
-        &created.id,
-        java_path,
-        false,
-        progress::nest_progress(
-            on_progress.clone(),
-            0.78,
-            0.95,
-            "Installing Minecraft + loader",
-        ),
-    )
-    .await?;
-    let _ = crate::launcher::content::sync_instance_content_metadata(&created.id, false).await;
-    let _ = db::set_instance_modpack_link(
-        &state.pool,
-        &created.id,
-        None,
-        None,
-        None,
-        Some("multimc"),
-        Some(&instance_name),
-    )
-    .await;
-    report(1.0, "Modpack installed".into());
-    db::get_instance(&state.pool, &created.id).await
-}
-
-async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    tokio::fs::create_dir_all(dst).await?;
-    let mut stack = vec![src.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let mut rd = tokio::fs::read_dir(&dir).await?;
-        while let Some(entry) = rd.next_entry().await? {
-            let path = entry.path();
-            let rel = path.strip_prefix(src).unwrap_or(&path);
-            let target = dst.join(rel);
-            if entry.file_type().await?.is_dir() {
-                tokio::fs::create_dir_all(&target).await?;
-                stack.push(path);
-            } else {
-                if let Some(parent) = target.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-                tokio::fs::copy(&path, &target).await?;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn pack_file_content_entry(

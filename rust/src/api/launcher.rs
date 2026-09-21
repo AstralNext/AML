@@ -14,6 +14,18 @@ pub async fn init_launcher(resource_dir: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Adapt a Dart progress callback into a fire-and-forget `ProgressFn`.
+fn progress_cb(
+    on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
+) -> launcher::download::ProgressFn {
+    Arc::new(move |p, m| {
+        let fut = on_progress(p, m);
+        tokio::spawn(async move {
+            fut.await;
+        });
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct InstanceDto {
     pub id: String,
@@ -181,111 +193,33 @@ pub async fn update_instance(
     clear_hooks: bool,
     update_channel: Option<String>,
 ) -> Result<InstanceDto, String> {
-    let state = state::try_state().map_err(|e| e.to_string())?;
-    let name = name
-        .map(|value| value.trim().chars().take(80).collect::<String>())
-        .filter(|value| !value.is_empty());
-    if let Some(ref value) = name {
-        launcher::instances::rename_instance(&id, value)
-            .await
-            .map_err(|e| format!("{e:#}"))?;
-    }
-    if let Some(value) = memory_mb {
-        if !(512..=131_072).contains(&value) {
-            return Err("内存必须介于 512 MB 和 131072 MB 之间".into());
+    fn tri<T>(value: Option<T>, clear: bool) -> Option<Option<T>> {
+        if clear {
+            Some(None)
+        } else {
+            value.map(Some)
         }
     }
-    for (label, value) in [("窗口宽度", window_width), ("窗口高度", window_height)] {
-        if let Some(value) = value {
-            if !(320..=16_384).contains(&value) {
-                return Err(format!("{label}必须介于 320 和 16384 之间"));
-            }
-        }
-    }
-    let java = if clear_java_path {
-        Some(None)
-    } else {
-        java_path.map(Some)
-    };
-    let memory = if clear_memory_mb {
-        Some(None)
-    } else {
-        memory_mb.map(Some)
-    };
-    let args = if clear_extra_jvm_args {
-        Some(None)
-    } else {
-        extra_jvm_args.map(Some)
-    };
-    // Name+folder already handled by rename_instance above.
-    db::update_instance(&state.pool, &id, None, java, memory, args, None)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let width = if clear_window_settings {
-        Some(None)
-    } else {
-        window_width.map(Some)
-    };
-    let height = if clear_window_settings {
-        Some(None)
-    } else {
-        window_height.map(Some)
-    };
-    let fullscreen = if clear_window_settings {
-        Some(None)
-    } else {
-        fullscreen.map(Some)
-    };
-    let environment = if clear_environment_vars {
-        Some(None)
-    } else {
-        environment_vars.map(Some)
-    };
-    let pre_launch = if clear_hooks {
-        Some(None)
-    } else {
-        pre_launch_command.map(Some)
-    };
-    let wrapper = if clear_hooks {
-        Some(None)
-    } else {
-        wrapper_command.map(Some)
-    };
-    let post_exit = if clear_hooks {
-        Some(None)
-    } else {
-        post_exit_command.map(Some)
-    };
-
-    db::update_instance_launch_settings(
-        &state.pool,
+    launcher::instances::update_instance_settings(
         &id,
-        width,
-        height,
-        fullscreen,
-        environment,
-        pre_launch,
-        wrapper,
-        post_exit,
+        launcher::instances::InstanceSettingsUpdate {
+            name,
+            java_path: tri(java_path, clear_java_path),
+            memory_mb: tri(memory_mb, clear_memory_mb),
+            extra_jvm_args: tri(extra_jvm_args, clear_extra_jvm_args),
+            window_width: tri(window_width, clear_window_settings),
+            window_height: tri(window_height, clear_window_settings),
+            fullscreen: tri(fullscreen, clear_window_settings),
+            environment_vars: tri(environment_vars, clear_environment_vars),
+            pre_launch_command: tri(pre_launch_command, clear_hooks),
+            wrapper_command: tri(wrapper_command, clear_hooks),
+            post_exit_command: tri(post_exit_command, clear_hooks),
+            update_channel,
+        },
     )
     .await
-    .map_err(|e| e.to_string())?;
-
-    if let Some(channel) = update_channel {
-        db::set_instance_update_channel(
-            &state.pool,
-            &id,
-            crate::state::models::UpdateChannel::parse(&channel),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-
-    db::get_instance(&state.pool, &id)
-        .await
-        .map(InstanceDto::from)
-        .map_err(|e| e.to_string())
+    .map(InstanceDto::from)
+    .map_err(|e| format!("{e:#}"))
 }
 
 pub async fn set_instance_groups(id: String, groups: Vec<String>) -> Result<InstanceDto, String> {
@@ -358,13 +292,7 @@ pub async fn reinstall_modpack(
     java_path: Option<String>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<InstanceDto, String> {
-    use std::sync::Arc;
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::content::reinstall_or_switch_modpack(&id, version_id.as_deref(), java_path, Some(cb))
         .await
         .map(InstanceDto::from)
@@ -403,18 +331,9 @@ pub async fn duplicate_instance(id: String) -> Result<InstanceDto, String> {
 }
 
 pub async fn remove_instance(id: String) -> Result<(), String> {
-    let state = state::try_state().map_err(|e| e.to_string())?;
-    let resource = state::resource_dir().await.map_err(|e| e.to_string())?;
-    let instance = db::remove_instance(&state.pool, &id)
+    launcher::instances::remove_instance(&id)
         .await
-        .map_err(|e| e.to_string())?;
-    let dir = launcher::dirs::instance_dir(&resource, &instance.path);
-    if dir.exists() {
-        tokio::fs::remove_dir_all(&dir)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+        .map_err(|e| format!("{e:#}"))
 }
 
 pub async fn install_instance(
@@ -423,12 +342,7 @@ pub async fn install_instance(
     force: bool,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<InstanceDto, String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::install::install_instance(&id, java_path, force, Some(cb))
         .await
         .map(InstanceDto::from)
@@ -594,106 +508,23 @@ pub struct ModFileDto {
 pub async fn list_instance_mods(instance_id: String) -> Result<Vec<ModFileDto>, String> {
     // Fast path: join local files with cached DB metadata only.
     // Network sync / hashing happens via `sync_instance_content_metadata`.
-    let state = state::try_state().map_err(|e| e.to_string())?;
-    let resource = state::resource_dir().await.map_err(|e| e.to_string())?;
-    let instance = db::get_instance(&state.pool, &instance_id)
+    launcher::content::list_content_files(&instance_id)
         .await
-        .map_err(|e| e.to_string())?;
-    let root = launcher::dirs::instance_dir(&resource, &instance.path);
-    let db_entries = db::list_content_for_instance(&state.pool, &instance_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut by_path: std::collections::HashMap<String, db::ContentEntry> = db_entries
-        .into_iter()
-        .map(|e| (e.relative_path.replace('\\', "/"), e))
-        .collect();
-
-    let mut out = Vec::new();
-    for folder in ["mods", "resourcepacks", "shaderpacks", "datapacks"] {
-        let dir = root.join(folder);
-        if !dir.exists() {
-            continue;
-        }
-        let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
-        while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let lower = name.to_lowercase();
-            let ok = lower.ends_with(".jar")
-                || lower.ends_with(".jar.disabled")
-                || lower.ends_with(".zip")
-                || lower.ends_with(".zip.disabled");
-            if !ok {
-                continue;
-            }
-            let meta = entry.metadata().await.map_err(|e| e.to_string())?;
-            if !meta.is_file() {
-                continue;
-            }
-            let relative = format!("{folder}/{name}").replace('\\', "/");
-            let enabled = !lower.ends_with(".disabled");
-            let db_hit = by_path.remove(&relative).or_else(|| {
-                let alt = if enabled {
-                    format!("{relative}.disabled")
-                } else {
-                    relative.trim_end_matches(".disabled").to_string()
-                };
-                by_path.remove(&alt)
-            });
-            out.push(mod_file_from_entry(
-                db_hit.as_ref(),
-                name.clone(),
-                relative,
-                enabled,
-                meta.len(),
-                folder,
-                false,
-            ));
-        }
-    }
-    for (_, e) in by_path {
-        if !e.pending {
-            continue;
-        }
-        out.push(mod_file_from_entry(
-            Some(&e),
-            e.file_name.clone(),
-            e.relative_path.clone(),
-            true,
-            0,
-            "",
-            true,
-        ));
-    }
-    out.sort_by(|a, b| {
-        b.is_missing.cmp(&a.is_missing).then_with(|| {
-            a.project_title
-                .as_deref()
-                .unwrap_or(&a.name)
-                .to_lowercase()
-                .cmp(&b.project_title.as_deref().unwrap_or(&b.name).to_lowercase())
-        })
-    });
-    Ok(out)
+        .map(|files| files.iter().map(mod_file_from_entry).collect())
+        .map_err(|e| format!("{e:#}"))
 }
 
-fn mod_file_from_entry(
-    db_hit: Option<&db::ContentEntry>,
-    name: String,
-    relative: String,
-    enabled: bool,
-    size_bytes: u64,
-    folder: &str,
-    is_missing: bool,
-) -> ModFileDto {
+fn mod_file_from_entry(entry: &launcher::content::ContentFileEntry) -> ModFileDto {
+    let db_hit = entry.db.as_ref();
     ModFileDto {
-        name,
-        relative_path: relative,
-        enabled,
-        size_bytes,
+        name: entry.name.clone(),
+        relative_path: entry.relative_path.clone(),
+        enabled: entry.enabled,
+        size_bytes: entry.size_bytes,
         project_type: db_hit
             .map(|e| e.project_type.clone())
             .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| match folder {
+            .unwrap_or_else(|| match entry.folder.as_str() {
                 "mods" => "mod".into(),
                 "resourcepacks" => "resourcepack".into(),
                 "shaderpacks" => "shader".into(),
@@ -713,11 +544,11 @@ fn mod_file_from_entry(
         author_id: db_hit.and_then(|e| e.author_id.clone()),
         author_type: db_hit.and_then(|e| e.author_type.clone()),
         update_version_id: db_hit.and_then(|e| e.update_version_id.clone()),
-        has_update: !is_missing
+        has_update: !entry.is_missing
             && db_hit
                 .and_then(|e| e.update_version_id.as_ref())
                 .is_some(),
-        is_missing,
+        is_missing: entry.is_missing,
     }
 }
 
@@ -737,97 +568,15 @@ pub async fn set_mod_enabled(
     relative_path: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let state = state::try_state().map_err(|e| e.to_string())?;
-    let resource = state::resource_dir().await.map_err(|e| e.to_string())?;
-    let instance = db::get_instance(&state.pool, &instance_id)
+    launcher::content::set_content_enabled(&instance_id, &relative_path, enabled)
         .await
-        .map_err(|e| e.to_string())?;
-    let root = launcher::dirs::instance_dir(&resource, &instance.path);
-    let current = root.join(&relative_path);
-    if !current.is_file() {
-        return Err(format!("文件不存在: {relative_path}"));
-    }
-    let file_name = current
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let target = if enabled {
-        if let Some(stripped) = file_name.strip_suffix(".disabled") {
-            current.with_file_name(stripped)
-        } else {
-            current.clone()
-        }
-    } else if file_name.to_lowercase().ends_with(".jar") {
-        current.with_file_name(format!("{file_name}.disabled"))
-    } else {
-        current.clone()
-    };
-
-    if target != current {
-        tokio::fs::rename(&current, &target)
-            .await
-            .map_err(|e| e.to_string())?;
-        let new_name = target
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or(file_name);
-        let new_rel = {
-            let parent = std::path::Path::new(&relative_path)
-                .parent()
-                .map(|p| p.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_default();
-            if parent.is_empty() {
-                new_name.clone()
-            } else {
-                format!("{parent}/{new_name}")
-            }
-        };
-        let _ = db::update_content_path_and_enabled(
-            &state.pool,
-            &instance_id,
-            &relative_path,
-            &new_rel,
-            &new_name,
-            enabled,
-        )
-        .await;
-    }
-    Ok(())
+        .map_err(|e| format!("{e:#}"))
 }
 
 pub async fn remove_instance_mod(instance_id: String, relative_path: String) -> Result<(), String> {
-    let state = state::try_state().map_err(|e| e.to_string())?;
-    let resource = state::resource_dir().await.map_err(|e| e.to_string())?;
-    let instance = db::get_instance(&state.pool, &instance_id)
+    launcher::content::remove_content_file(&instance_id, &relative_path)
         .await
-        .map_err(|e| e.to_string())?;
-    let root = launcher::dirs::instance_dir(&resource, &instance.path);
-    let path = root.join(&relative_path);
-    let normalized = relative_path.replace('\\', "/");
-    let allowed = normalized.starts_with("mods/")
-        || normalized.starts_with("resourcepacks/")
-        || normalized.starts_with("shaderpacks/")
-        || normalized.starts_with("datapacks/");
-    if !allowed {
-        return Err("只能删除实例内容目录下的文件".into());
-    }
-    if path.is_file() {
-        tokio::fs::remove_file(&path)
-            .await
-            .map_err(|e| e.to_string())?;
-    } else {
-        let entries = db::list_content_for_instance(&state.pool, &instance_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        let pending = entries.iter().any(|e| {
-            e.relative_path.replace('\\', "/") == normalized && e.pending
-        });
-        if !pending {
-            return Err(format!("文件不存在: {relative_path}"));
-        }
-    }
-    let _ = db::remove_content_entry(&state.pool, &instance_id, &normalized).await;
-    Ok(())
+        .map_err(|e| format!("{e:#}"))
 }
 
 pub async fn open_instance_folder(instance_id: String) -> Result<String, String> {
@@ -1522,12 +1271,7 @@ pub async fn install_modrinth_version(
     install_deps: Option<bool>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<String, String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::content::install_modrinth_version(
         &instance_id,
         &version_id,
@@ -1546,12 +1290,7 @@ pub async fn install_curseforge_file(
     project_type: Option<String>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<String, String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::content::install_curseforge_file(
         &instance_id,
         mod_id,
@@ -1568,12 +1307,7 @@ pub async fn retry_missing_content(
     relative_path: String,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<String, String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::content::retry_missing_content(&instance_id, &relative_path, Some(cb))
         .await
         .map_err(|e| format!("{e:#}"))
@@ -1585,12 +1319,7 @@ pub async fn install_mrpack(
     java_path: Option<String>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<(), String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::content::install_mrpack(&instance_id, &mrpack_path, java_path, Some(cb))
         .await
         .map_err(|e| {
@@ -1606,12 +1335,7 @@ pub async fn create_instance_from_modrinth_modpack(
     resume_instance_id: Option<String>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<InstanceDto, String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::content::create_instance_from_modrinth_modpack(
         &version_id,
         name,
@@ -1635,12 +1359,7 @@ pub async fn create_instance_from_curseforge_modpack(
     resume_instance_id: Option<String>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<InstanceDto, String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::content::create_instance_from_curseforge_modpack(
         mod_id,
         file_id,
@@ -1909,12 +1628,7 @@ pub async fn create_instance_from_pack_file(
     resume_instance_id: Option<String>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<InstanceDto, String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::pack::create_instance_from_pack_file_resumable(
         &path,
         name,
@@ -1936,12 +1650,7 @@ pub async fn create_instance_from_mmc_folder(
     java_path: Option<String>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<InstanceDto, String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::pack::create_instance_from_mmc_folder(&folder, name, java_path, Some(cb))
         .await
         .map(InstanceDto::from)
@@ -1991,12 +1700,7 @@ pub async fn export_instance_pack(
     include_paths: Option<Vec<String>>,
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<(), String> {
-    let cb: launcher::download::ProgressFn = Arc::new(move |p, m| {
-        let fut = on_progress(p, m);
-        tokio::spawn(async move {
-            fut.await;
-        });
-    });
+    let cb = progress_cb(on_progress);
     launcher::pack::export_instance_pack(
         &instance_id,
         &export_path,

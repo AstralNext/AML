@@ -8,7 +8,11 @@ mod export_mcbbs;
 mod export_mmc;
 mod export_mrpack;
 mod icon;
-mod import;
+mod import_common;
+mod import_curseforge;
+mod import_mcbbs;
+mod import_mmc;
+mod import_mrpack;
 mod mmc;
 
 pub use detect::{detect_pack_bytes, detect_pack_file, PackKind};
@@ -22,10 +26,10 @@ pub use export_mrpack::export_instance_mrpack;
 pub use icon::{
     find_pack_icon_bytes, try_extract_pack_icon_from_archive, try_extract_pack_icon_to,
 };
-pub use import::{
-    create_instance_from_mmc_folder, create_instance_from_pack_file_resumable, preview_pack_file,
-    PackImportPreview,
+pub use import_common::{
+    create_instance_from_pack_file_resumable, preview_pack_file, PackImportPreview,
 };
+pub use import_mmc::create_instance_from_mmc_folder;
 
 use anyhow::{anyhow, Result};
 use crate::config::CURSEFORGE_API_KEY_DEFAULT;
