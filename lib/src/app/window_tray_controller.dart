@@ -35,14 +35,21 @@ class WindowTrayController with WindowListener, TrayListener {
       debugPrint('tray using icon: $iconPath');
 
       await trayManager.setIcon(iconPath);
-      await trayManager.setToolTip('AML');
-      await trayManager.setContextMenu(
-        Menu(
-          items: [
-            MenuItem(key: 'show', label: '显示主窗口'),
-            MenuItem.separator(),
-            MenuItem(key: 'exit', label: '退出 AML'),
-          ],
+      // 各平台对托盘能力的支持并不一致：tray_manager 的 Linux 实现只提供了
+      // setIcon / setTitle / setContextMenu，setToolTip 会抛 MissingPluginException
+      // （libayatana-appindicator 本身也没有 tooltip 接口）。这里是逐项兜底，
+      // 避免某个可选调用失败后，后面的右键菜单与事件监听被一起跳过。
+      await _attemptOptional('setToolTip', () => trayManager.setToolTip('AML'));
+      await _attemptOptional(
+        'setContextMenu',
+        () => trayManager.setContextMenu(
+          Menu(
+            items: [
+              MenuItem(key: 'show', label: '显示主窗口'),
+              MenuItem.separator(),
+              MenuItem(key: 'exit', label: '退出 AML'),
+            ],
+          ),
         ),
       );
       trayManager.addListener(this);
@@ -50,9 +57,9 @@ class WindowTrayController with WindowListener, TrayListener {
       debugPrint('tray init failed: $e\n$st');
       if (Platform.isLinux) {
         debugPrint(
-          '[tray] Linux 需要 libayatana-appindicator3-1 或 libappindicator3-1。'
-          ' GNOME 桌面还需安装 AppIndicator 扩展。'
-          ' 运行: sudo apt install libayatana-appindicator3-dev',
+          '[tray] Linux 需要 libayatana-appindicator3-1 或 libappindicator3-1，'
+          '并且桌面面板需要提供 StatusNotifier 宿主（GNOME 需安装 AppIndicator '
+          '扩展，wlroots/waybar 需启用 tray 模块）。',
         );
       }
     }
@@ -92,6 +99,18 @@ class WindowTrayController with WindowListener, TrayListener {
 
   Future<void> _syncPreventClose(bool closeToTray) async {
     await windowManager.setPreventClose(closeToTray);
+  }
+
+  /// 执行可选的托盘能力调用；平台不支持时只记录日志，不影响其它能力。
+  Future<void> _attemptOptional(
+    String label,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } catch (e) {
+      debugPrint('tray $label unsupported on this platform: $e');
+    }
   }
 
   Future<void> showMainWindow() async {

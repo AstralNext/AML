@@ -1,8 +1,8 @@
 import 'package:aml/src/app/di/service_locator.dart';
+import 'package:aml/src/app/state/runtime_state.dart';
 import 'package:aml/src/features/instances/ui/instance_settings_controller.dart';
 import 'package:aml/src/features/instances/ui/instance_settings_widgets.dart';
 import 'package:aml/src/features/java/application/java_download_service.dart';
-import 'package:aml/src/features/settings/application/resource_settings_state.dart';
 import 'package:aml/src/features/settings/ui/widgets/java_selector.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
 import 'package:aml/src/shared/widgets/components/inputs/input_bar.dart';
@@ -17,7 +17,10 @@ class InstanceSettingsJavaTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tokens = context.tokens;
-    final resourceDir = getIt<ResourceSettingsState>().resourceDirectory.value;
+    // Java 运行时安装在应用数据目录下的 java/（Rust 侧 java_download / jre_scan
+    // 都以 `appDataDir/java` 为基目录扫描），这里必须传应用数据目录，
+    // 否则「检测」永远找不到自动下载的 JRE。
+    final appDataDir = getIt<RuntimeState>().appDataDirectory.value;
     final activeJavaPath =
         controller.overrideJava ? controller.javaPath : controller.defaultJavaPath;
     return ListenableBuilder(
@@ -46,7 +49,7 @@ class InstanceSettingsJavaTab extends StatelessWidget {
                   JavaSelector(
                     version: controller.requiredJavaMajor,
                     path: activeJavaPath,
-                    appDataDir: resourceDir,
+                    appDataDir: appDataDir,
                     javaDownloadService: getIt<JavaDownloadService>(),
                     disabled: !controller.overrideJava || controller.saving,
                     onPathChanged: controller.setJavaPath,

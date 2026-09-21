@@ -42,6 +42,10 @@ endif()
 function(APPLY_STANDARD_SETTINGS TARGET)
   target_compile_features(${TARGET} PUBLIC cxx_std_14)
   target_compile_options(${TARGET} PRIVATE -Wall -Werror)
+  # libayatana-appindicator >= 0.6 将 app_indicator_new 标记为 deprecated，
+  # 在 -Werror 下会让第三方插件（如 tray_manager）编译失败。保留 -Werror 对
+  # 其它告警的约束，仅关闭 deprecation 告警。
+  target_compile_options(${TARGET} PRIVATE -Wno-deprecated-declarations)
   target_compile_options(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:-O3>")
   target_compile_definitions(${TARGET} PRIVATE "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
 endfunction()
