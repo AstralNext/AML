@@ -15,7 +15,9 @@ class UiSettingsState {
   final closeToTray = signal(true);
   final checkUpdatesOnStartup = signal(true);
   final dismissedUpdateTag = signal('');
-  final translateDiscoverContent = signal(true);
+  final translateTitle = signal(true);
+  final translateDescription = signal(true);
+  final translateBody = signal(false);
   final useMcdbSearch = signal(true);
   final librarySortBy = signal('name');
   final libraryGroupBy = signal('none');
@@ -58,7 +60,9 @@ class UiSettingsState {
         closeToTray.value,
         checkUpdatesOnStartup.value,
         dismissedUpdateTag.value,
-        translateDiscoverContent.value,
+        translateTitle.value,
+        translateDescription.value,
+        translateBody.value,
         useMcdbSearch.value,
         librarySortBy.value,
         libraryGroupBy.value,
@@ -85,7 +89,9 @@ class UiSettingsState {
     closeToTray.value = settings.closeToTray;
     checkUpdatesOnStartup.value = settings.checkUpdatesOnStartup;
     dismissedUpdateTag.value = settings.dismissedUpdateTag;
-    translateDiscoverContent.value = settings.translateDiscoverContent;
+    translateTitle.value = settings.translateTitle;
+    translateDescription.value = settings.translateDescription;
+    translateBody.value = settings.translateBody;
     useMcdbSearch.value = settings.useMcdbSearch;
     librarySortBy.value = settings.librarySortBy;
     libraryGroupBy.value = settings.libraryGroupBy;
@@ -110,7 +116,9 @@ class UiSettingsState {
       closeToTray: closeToTray.value,
       checkUpdatesOnStartup: checkUpdatesOnStartup.value,
       dismissedUpdateTag: dismissedUpdateTag.value,
-      translateDiscoverContent: translateDiscoverContent.value,
+      translateTitle: translateTitle.value,
+      translateDescription: translateDescription.value,
+      translateBody: translateBody.value,
       useMcdbSearch: useMcdbSearch.value,
       librarySortBy: librarySortBy.value,
       libraryGroupBy: libraryGroupBy.value,
@@ -148,9 +156,19 @@ class UiSettingsState {
     dismissedUpdateTag.value = value;
   }
 
-  void setTranslateDiscoverContent(bool value) {
-    if (translateDiscoverContent.value == value) return;
-    translateDiscoverContent.value = value;
+  void setTranslateTitle(bool value) {
+    if (translateTitle.value == value) return;
+    translateTitle.value = value;
+  }
+
+  void setTranslateDescription(bool value) {
+    if (translateDescription.value == value) return;
+    translateDescription.value = value;
+  }
+
+  void setTranslateBody(bool value) {
+    if (translateBody.value == value) return;
+    translateBody.value = value;
   }
 
   void setUseMcdbSearch(bool value) {

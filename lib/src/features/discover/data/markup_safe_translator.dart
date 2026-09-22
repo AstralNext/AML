@@ -112,8 +112,16 @@ class MarkupSafeTranslator {
     return (text: text, tokens: tokens);
   }
 
+  /// Regex matching a protected token with tolerant spacing / entity variants.
+  /// Group 1 = numeric index. The translator occasionally inserts spaces or
+  /// re-encodes entities, so we match loosely and restore the original payload.
+  static final _tokenRegex = RegExp(
+    r'&(?:amp;)?#x[Ee]000;\s*AML\s*(\d+)\s*&(?:amp;)?#x[Ee]001;',
+  );
+
   static String unprotectSegments(String html, List<String> tokens) {
     var out = html;
+    // Pass 1: exact variants (fast path).
     for (var i = 0; i < tokens.length; i++) {
       final variants = <String>[
         '&#xE000;AML$i&#xE001;',
@@ -128,6 +136,13 @@ class MarkupSafeTranslator {
         }
       }
     }
+    // Pass 2: regex fallback for tokens mangled by the translator (extra
+    // whitespace, entity re-encoding).
+    out = out.replaceAllMapped(_tokenRegex, (m) {
+      final idx = int.tryParse(m.group(1) ?? '');
+      if (idx == null || idx >= tokens.length) return m.group(0)!;
+      return tokens[idx];
+    });
     return out;
   }
 

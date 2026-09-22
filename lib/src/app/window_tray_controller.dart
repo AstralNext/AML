@@ -35,7 +35,14 @@ class WindowTrayController with WindowListener, TrayListener {
       debugPrint('tray using icon: $iconPath');
 
       await trayManager.setIcon(iconPath);
-      await trayManager.setToolTip('AML');
+      // tray_manager 0.5.x 的 Linux(AppIndicator) 端未实现 setToolTip，
+      // 会抛 MissingPluginException。不能让它中断后面的菜单/监听注册，
+      // 否则托盘图标可见但右键无菜单、点击无响应。
+      try {
+        await trayManager.setToolTip('AML');
+      } catch (e) {
+        debugPrint('tray setToolTip unsupported on this platform: $e');
+      }
       await trayManager.setContextMenu(
         Menu(
           items: [
@@ -48,13 +55,6 @@ class WindowTrayController with WindowListener, TrayListener {
       trayManager.addListener(this);
     } catch (e, st) {
       debugPrint('tray init failed: $e\n$st');
-      if (Platform.isLinux) {
-        debugPrint(
-          '[tray] Linux 需要 libayatana-appindicator3-1 或 libappindicator3-1。'
-          ' GNOME 桌面还需安装 AppIndicator 扩展。'
-          ' 运行: sudo apt install libayatana-appindicator3-dev',
-        );
-      }
     }
 
     _onCloseToTrayChanged = (enabled) {

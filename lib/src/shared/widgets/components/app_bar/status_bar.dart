@@ -422,6 +422,9 @@ class _DownloaderStatusButton extends StatelessWidget {
                     ? tokens.colorBrand
                     : tokens.colorButtonTextSelected.withAlpha(200),
             onTap: () {
+              // 弹窗打开时点击按钮，穿透遮罩已在 down 阶段关闭弹窗，
+              // 忽略同一次点击后续的 tap，避免“关了又开”。
+              if (progressStore.consumeJustDismissedByOutsideTap()) return;
               progressStore.progressVisibility.value =
                   !progressStore.progressVisibility.value;
             },

@@ -1,6 +1,7 @@
 import 'package:aml/src/features/discover/data/cache_service.dart';
 import 'package:aml/src/features/discover/data/curseforge_api.dart';
 import 'package:aml/src/features/discover/data/discover_ids.dart';
+import 'package:aml/src/features/discover/data/discover_translation.dart';
 import 'package:aml/src/features/discover/data/mcim_api.dart';
 import 'package:aml/src/features/discover/domain/discover_repository.dart';
 import 'package:flutter/foundation.dart';
@@ -70,7 +71,8 @@ class CurseForgeRepository implements DiscoverRepository {
       cacheDuration: _searchTtl,
     );
 
-    final projects = result.data.map((m) {
+    final mods = result.data;
+    var projects = mods.map((m) {
       return Project(
         id: curseForgeProjectId(m.id),
         title: m.name,
@@ -90,6 +92,24 @@ class CurseForgeRepository implements DiscoverRepository {
         dateModified: m.dateModified,
       );
     }).toList();
+
+    // 简介走 MCIM 批量汉化。
+    if (DiscoverTranslation.descriptionEnabled) {
+      try {
+        final modIds = mods.map((m) => m.id).toList();
+        final mcimDescs =
+            await McimApi.fetchCurseForgeTranslationsBatch(modIds: modIds);
+        if (mcimDescs.isNotEmpty) {
+          projects = projects.map((p) {
+            final cfId = parseCurseForgeModId(p.id);
+            final zh = cfId != null ? mcimDescs['$cfId'] : null;
+            return zh != null ? p.copyWith(description: zh) : p;
+          }).toList();
+        }
+      } catch (e) {
+        debugPrint('[Discover/CF] mcim desc failed: $e');
+      }
+    }
 
     final out = SearchResult(
       projects: projects,

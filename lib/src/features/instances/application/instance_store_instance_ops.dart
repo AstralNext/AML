@@ -153,7 +153,8 @@ mixin _InstanceStoreInstanceOps on _InstanceStoreCore {
     return rust.openInstanceFolder(instanceId: id);
   }
 
-  Future<void> install(String id, {bool force = false, int retryAttempt = 0}) async {
+  Future<void> install(String id,
+      {bool force = false, int retryAttempt = 0}) async {
     final progress = getIt<ProgressStore>().createProgressItem(
       '安装实例',
       retryAttempt: retryAttempt,
@@ -250,8 +251,7 @@ mixin _InstanceStoreInstanceOps on _InstanceStoreCore {
       await rust.launchInstance(
         id: id,
         javaPath: java,
-        quickPlaySingleplayer:
-            (world == null || world.isEmpty) ? null : world,
+        quickPlaySingleplayer: (world == null || world.isEmpty) ? null : world,
         quickPlayMultiplayer:
             (server == null || server.isEmpty) ? null : server,
       );

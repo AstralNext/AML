@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 void showInstanceContentDetailSheet({
   required BuildContext context,
   required rust.ModFileDto mod,
+  String? instanceId,
 }) {
   final tokens = context.tokens;
   final title =
@@ -47,8 +48,7 @@ void showInstanceContentDetailSheet({
                     ),
                   )
                 else
-                  Icon(Icons.extension,
-                      size: 48, color: tokens.colorContrast),
+                  Icon(Icons.extension, size: 48, color: tokens.colorContrast),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -108,7 +108,10 @@ void showInstanceContentDetailSheet({
                   ),
                   onPressed: () {
                     Navigator.pop(ctx);
-                    getIt<NavigationState>().openProject(mod.projectId!);
+                    getIt<NavigationState>().openProject(
+                      mod.projectId!,
+                      installInstanceId: instanceId,
+                    );
                   },
                   child: const Text('查看详情'),
                 ),

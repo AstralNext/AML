@@ -3,22 +3,28 @@ import 'dart:convert';
 import 'package:aml/src/features/discover/data/cache_service.dart';
 import 'package:http/http.dart' as http;
 
-/// Microsoft Edge Translator (same public endpoints Axolotl uses).
+/// Microsoft Edge Translator (public endpoint, no auth required).
+///
+/// As of 2026-08 the old token endpoint
+/// `https://edge.microsoft.com/translate/auth` returns 404. The current free
+/// path is `https://edge.microsoft.com/translate/translatetext`, which accepts
+/// a JSON array of plain strings and requires only a browser-like User-Agent.
 class MicrosoftTranslator {
   MicrosoftTranslator._();
 
-  static const _authUrl = 'https://edge.microsoft.com/translate/auth';
   static const _translateUrl =
-      'https://api-edge.cognitive.microsofttranslator.com/translate';
+      'https://edge.microsoft.com/translate/translatetext';
+
+  /// Browser-like UA is required by the Edge translatetext endpoint.
+  static const _userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.35';
 
   /// Edge/public endpoint is happier with smaller payloads.
   static const _maxCharsPerRequest = 4000;
 
   static const _cacheTtl = Duration(days: 7);
   static final CacheService cache = CacheService(maxEntries: 128);
-
-  static String? _token;
-  static DateTime? _tokenExpiresAt;
 
   static bool looksChinese(String text) =>
       RegExp(r'[\u4e00-\u9fff]').hasMatch(text);
@@ -174,7 +180,28 @@ class MicrosoftTranslator {
     return buf.toString();
   }
 
-  /// Prefer paragraph / block-tag boundaries; never cut inside an HTML tag.
+  /// Protected segment markers inserted by MarkupSafeTranslator.
+  /// A split must never fall inside `&#xE000;AML$idx&#xE001;` or the
+  /// `<pre>`/`<code>`/terminal payload it stands for gets leaked to the
+  /// translator and corrupted.
+  static final _protectOpen = RegExp(r'&(?:amp;)?#x[Ee]000;');
+  static final _protectClose = RegExp(r'&(?:amp;)?#x[Ee]001;');
+
+  /// If [pos] sits inside a protected token, return the index right after its
+  /// closing marker. Otherwise return null.
+  static int? _protectedTokenEnd(String text, int pos) {
+    final open = _protectOpen.allMatches(text.substring(0, pos));
+    if (open.isEmpty) return null;
+    final lastOpen = open.last;
+    final close = _protectClose.firstMatch(text.substring(lastOpen.start));
+    if (close == null) return null;
+    final tokenEnd = lastOpen.start + close.end;
+    if (pos < tokenEnd) return tokenEnd;
+    return null;
+  }
+
+  /// Prefer paragraph / block-tag boundaries; never cut inside an HTML tag
+  /// or a protected segment token.
   static List<String> _splitForTranslation(
     String text, {
     required bool html,
@@ -227,6 +254,11 @@ class MicrosoftTranslator {
         if (lastLt > lastGt && lastLt > maxChars ~/ 4) {
           end = start + lastLt;
         }
+        // Never split inside a protected (code/pre/terminal) token.
+        final tokenEnd = _protectedTokenEnd(text, end);
+        if (tokenEnd != null) {
+          end = tokenEnd;
+        }
       }
       if (end <= start) {
         end = (start + maxChars).clamp(0, text.length);
@@ -237,76 +269,61 @@ class MicrosoftTranslator {
     return parts;
   }
 
-  static Future<String> _ensureToken() async {
-    final now = DateTime.now();
-    if (_token != null &&
-        _tokenExpiresAt != null &&
-        now.isBefore(_tokenExpiresAt!)) {
-      return _token!;
-    }
-    final response = await http
-        .get(Uri.parse(_authUrl), headers: {'User-Agent': 'AML-App/1.0.0'})
-        .timeout(const Duration(seconds: 10));
-    if (response.statusCode != 200) {
-      throw Exception('Microsoft translate auth failed: ${response.statusCode}');
-    }
-    final token = response.body.trim();
-    if (token.isEmpty) {
-      throw Exception('Microsoft translate auth returned empty token');
-    }
-    _token = token;
-    _tokenExpiresAt = now.add(const Duration(minutes: 8));
-    return token;
-  }
-
   static Future<List<String>> _translateChunk(
     List<String> texts, {
     required bool html,
   }) async {
     if (texts.isEmpty) return const [];
-    var token = await _ensureToken();
 
-    Future<http.Response> send(String auth) {
-      final uri = Uri.parse(_translateUrl).replace(
-        queryParameters: {
-          'api-version': '3.0',
-          'to': 'zh-Hans',
-          'textType': html ? 'html' : 'plain',
-        },
-      );
-      return http
+    final uri = Uri.parse(_translateUrl).replace(
+      queryParameters: {
+        'to': 'zh-Hans',
+        'textType': html ? 'html' : 'plain',
+        'isEnterpriseClient': 'false',
+      },
+    );
+
+    http.Response response = await http
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'User-Agent': _userAgent,
+          },
+          // New endpoint expects a plain JSON array of strings, NOT
+          // [{"Text": "..."}] as the old Azure-style endpoint did.
+          body: jsonEncode(texts),
+        )
+        .timeout(const Duration(seconds: 30));
+
+    if (response.statusCode == 429) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      response = await http
           .post(
             uri,
             headers: {
               'Content-Type': 'application/json; charset=utf-8',
-              'Authorization': 'Bearer $auth',
-              'User-Agent': 'AML-App/1.0.0',
+              'User-Agent': _userAgent,
             },
-            body: jsonEncode([
-              for (final t in texts) {'Text': t},
-            ]),
+            body: jsonEncode(texts),
           )
           .timeout(const Duration(seconds: 30));
     }
-
-    var response = await send(token);
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      _token = null;
-      _tokenExpiresAt = null;
-      token = await _ensureToken();
-      response = await send(token);
-    }
-    if (response.statusCode == 429) {
-      await Future<void>.delayed(const Duration(seconds: 2));
-      response = await send(token);
-    }
     if (response.statusCode != 200) {
+      print(
+        '[ms-translate] HTTP ${response.statusCode} '
+        'body=${utf8.decode(response.bodyBytes).substring(0, 200)}',
+      );
       throw Exception(
         'Microsoft translate failed: ${response.statusCode}',
       );
     }
 
     final list = jsonDecode(utf8.decode(response.bodyBytes)) as List<dynamic>;
+    print(
+      '[ms-translate] HTTP 200 items=${list.length} '
+      'first=${list.isNotEmpty ? (list.first['translations']?.first?['text']?.toString().substring(0, 40) ?? '') : ''}',
+    );
     final out = <String>[];
     for (var i = 0; i < texts.length; i++) {
       if (i >= list.length) {

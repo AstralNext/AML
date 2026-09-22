@@ -157,11 +157,23 @@ async fn install_version_file(
             );
         }
     };
-    let bytes = download::download_checked_with_mcim_fallback(
+    // Map streamed byte progress into the download phase [progress, progress+0.25]
+    // so the UI shows live downloaded/total/speed instead of jumping 0.2 → 0.45.
+    let on_bytes = on_progress.clone().map(|cb| {
+        progress::file_bytes_cb(
+            cb,
+            "Downloading",
+            file.filename.clone(),
+            progress,
+            (progress + 0.25).min(0.95),
+        )
+    });
+    let bytes = download::download_checked_with_mcim_fallback_bytes(
         client,
         &file.url,
         None,
         Some(&on_retry),
+        on_bytes,
     )
     .await?;
     let sha1 = download::sha1_hex(&bytes);

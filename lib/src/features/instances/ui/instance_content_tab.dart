@@ -388,16 +388,16 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                         key: ValueKey(mod.relativePath),
                         child: InstanceContentRow(
                           tokens: tokens,
+                          instanceId: widget.instanceId,
                           mod: mod,
                           busy: _busy,
                           updatingContentPaths: _updatingContentPaths,
-                          onShowDetail: () =>
-                              showInstanceContentDetailSheet(
-                                context: context,
-                                mod: mod,
-                              ),
-                          onToggleEnabled: (v) =>
-                              _toggleContentEnabled(mod, v),
+                          onShowDetail: () => showInstanceContentDetailSheet(
+                            context: context,
+                            mod: mod,
+                            instanceId: widget.instanceId,
+                          ),
+                          onToggleEnabled: (v) => _toggleContentEnabled(mod, v),
                           onDownloadMissing: () => _downloadMissingContent(mod),
                           onUpdate: () => _updateContent(mod),
                           onSwitchVersion: () => _switchContentVersion(mod),

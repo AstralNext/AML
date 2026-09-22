@@ -15,8 +15,14 @@ class UiSettings {
   /// Last update tag the user chose to skip (e.g. `v0.0.2-beta`).
   final String dismissedUpdateTag;
 
+  /// When true, project titles are localized via MCDB (Modrinth).
+  final bool translateTitle;
+
+  /// When true, project descriptions are localized via MCIM.
+  final bool translateDescription;
+
   /// When true, project detail HTML/Markdown body is cloud-translated.
-  final bool translateDiscoverContent;
+  final bool translateBody;
 
   /// When true, Chinese search queries are rewritten via MCDB online title search.
   final bool useMcdbSearch;
@@ -60,7 +66,9 @@ class UiSettings {
     this.closeToTray = true,
     this.checkUpdatesOnStartup = true,
     this.dismissedUpdateTag = '',
-    this.translateDiscoverContent = true,
+    this.translateTitle = true,
+    this.translateDescription = true,
+    this.translateBody = false,
     this.useMcdbSearch = true,
     this.librarySortBy = 'name',
     this.libraryGroupBy = 'none',
@@ -81,7 +89,9 @@ class UiSettings {
         closeToTray: true,
         checkUpdatesOnStartup: true,
         dismissedUpdateTag: '',
-        translateDiscoverContent: true,
+        translateTitle: true,
+        translateDescription: true,
+        translateBody: false,
         useMcdbSearch: true,
         librarySortBy: 'name',
         libraryGroupBy: 'none',
@@ -102,7 +112,9 @@ class UiSettings {
     bool? closeToTray,
     bool? checkUpdatesOnStartup,
     String? dismissedUpdateTag,
-    bool? translateDiscoverContent,
+    bool? translateTitle,
+    bool? translateDescription,
+    bool? translateBody,
     bool? useMcdbSearch,
     String? librarySortBy,
     String? libraryGroupBy,
@@ -123,8 +135,10 @@ class UiSettings {
       checkUpdatesOnStartup:
           checkUpdatesOnStartup ?? this.checkUpdatesOnStartup,
       dismissedUpdateTag: dismissedUpdateTag ?? this.dismissedUpdateTag,
-      translateDiscoverContent:
-          translateDiscoverContent ?? this.translateDiscoverContent,
+      translateTitle: translateTitle ?? this.translateTitle,
+      translateDescription:
+          translateDescription ?? this.translateDescription,
+      translateBody: translateBody ?? this.translateBody,
       useMcdbSearch: useMcdbSearch ?? this.useMcdbSearch,
       librarySortBy: librarySortBy ?? this.librarySortBy,
       libraryGroupBy: libraryGroupBy ?? this.libraryGroupBy,
@@ -147,7 +161,9 @@ class UiSettings {
         'closeToTray': closeToTray,
         'checkUpdatesOnStartup': checkUpdatesOnStartup,
         'dismissedUpdateTag': dismissedUpdateTag,
-        'translateDiscoverContent': translateDiscoverContent,
+        'translateTitle': translateTitle,
+        'translateDescription': translateDescription,
+        'translateBody': translateBody,
         'useMcdbSearch': useMcdbSearch,
         'librarySortBy': librarySortBy,
         'libraryGroupBy': libraryGroupBy,
@@ -173,8 +189,9 @@ class UiSettings {
       closeToTray: json['closeToTray'] as bool? ?? true,
       checkUpdatesOnStartup: json['checkUpdatesOnStartup'] as bool? ?? true,
       dismissedUpdateTag: json['dismissedUpdateTag'] as String? ?? '',
-      translateDiscoverContent:
-          json['translateDiscoverContent'] as bool? ?? true,
+      translateTitle: json['translateTitle'] as bool? ?? true,
+      translateDescription: json['translateDescription'] as bool? ?? true,
+      translateBody: json['translateBody'] as bool? ?? false,
       useMcdbSearch: json['useMcdbSearch'] as bool? ?? true,
       librarySortBy: json['librarySortBy'] as String? ?? 'name',
       libraryGroupBy: json['libraryGroupBy'] as String? ?? 'none',

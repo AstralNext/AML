@@ -1,4 +1,4 @@
-package com.example.aml
+package com.astral.aml
 
 import io.flutter.embedding.android.FlutterActivity
 

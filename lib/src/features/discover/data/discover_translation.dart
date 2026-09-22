@@ -4,6 +4,7 @@ import 'package:aml/src/app/di/service_locator.dart';
 import 'package:aml/src/features/discover/data/content_translator.dart';
 import 'package:aml/src/features/discover/data/markup_safe_translator.dart';
 import 'package:aml/src/features/discover/data/mcdb_client.dart';
+import 'package:aml/src/features/discover/data/mcim_api.dart';
 import 'package:aml/src/features/discover/data/microsoft_translator.dart';
 import 'package:aml/src/features/settings/application/ui_settings_state.dart';
 import 'package:aml/src/rust/api/project_i18n.dart' as i18n;
@@ -48,12 +49,30 @@ class DiscoverTranslation {
   static const platformModrinth = 'modrinth';
   static const platformCurseforge = 'curseforge';
 
+  /// 标题汉化（MCDB）开关。
+  static bool get titleEnabled {
+    try {
+      return getIt<UiSettingsState>().translateTitle.value;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// 简介汉化（MCIM）开关。
+  static bool get descriptionEnabled {
+    try {
+      return getIt<UiSettingsState>().translateDescription.value;
+    } catch (_) {
+      return true;
+    }
+  }
+
   /// 详情页云翻译（正文 HTML/Markdown）开关。
   static bool get detailBodyEnabled {
     try {
-      return getIt<UiSettingsState>().translateDiscoverContent.value;
+      return getIt<UiSettingsState>().translateBody.value;
     } catch (_) {
-      return true;
+      return false;
     }
   }
 
@@ -131,11 +150,22 @@ class DiscoverTranslation {
     try {
       final rows =
           await McdbClient.lookupByIds(projects.map((p) => p.id).toSet());
+      // 简介走 MCIM 批量接口（MCDB 无 descZh）。
+      Map<String, String> mcimDescs = const {};
+      if (descriptionEnabled) {
+        mcimDescs = await McimApi.fetchTranslationsBatch(
+          projectIds: projects.map((p) => p.id).toList(),
+        );
+      }
       final mapped = {
         for (final p in projects)
           p.id: LocalizedFields(
-            title: _preferZh(rows[p.id]?.zh, p.title),
-            description: _preferZh(rows[p.id]?.descZh, p.description),
+            title: titleEnabled
+                ? _preferZh(rows[p.id]?.zh, p.title)
+                : p.title,
+            description: descriptionEnabled
+                ? (mcimDescs[p.id] ?? p.description)
+                : p.description,
           ),
       };
       unawaited(_persistMcdbToLocal(projects, rows));
@@ -169,8 +199,12 @@ class DiscoverTranslation {
       return {
         for (final p in projects)
           p.id: LocalizedFields(
-            title: _preferZh(byId[p.id]?.zhTitle, p.title),
-            description: _preferZh(byId[p.id]?.zhSummary, p.description),
+            title: titleEnabled
+                ? _preferZh(byId[p.id]?.zhTitle, p.title)
+                : p.title,
+            description: descriptionEnabled
+                ? _preferZh(byId[p.id]?.zhSummary, p.description)
+                : p.description,
           ),
       };
     } catch (e) {
@@ -219,7 +253,31 @@ class DiscoverTranslation {
     }
   }
 
-  /// 详情页：Modrinth 标题/简介走 MCDB；正文走云翻译。CF 仅正文走云翻译。
+  /// 仅标题汉化（MCDB `row.zh`），用于详情页加载时立即显示中文标题，
+  /// 与列表页行为一致。不走云翻译。
+  static Future<String> localizeTitle({
+    required String platform,
+    required String projectId,
+    required String title,
+  }) async {
+    if (!titleEnabled || platform != platformModrinth) return title;
+    try {
+      final rows = await McdbClient.lookupByIds({projectId});
+      final row = rows[projectId];
+      if (row != null && row.zh.trim().isNotEmpty) {
+        return row.zh;
+      }
+    } catch (e) {
+      debugPrint('localizeTitle mcdb failed: $e');
+    }
+    return title;
+  }
+
+  /// 详情页翻译。
+  ///
+  /// - 标题：MCDB `row.zh`，缺失则保留原文。
+  /// - 简介：MCIM `/translate/{platform}/{id}`，缺失则保留原文。
+  /// - 正文：`MarkupSafeTranslator` 云翻译，`kind='body_html'` 哈希缓存。
   static Future<({String title, String description, String body})>
       localizeDetail({
     required String platform,
@@ -229,22 +287,33 @@ class DiscoverTranslation {
     required String description,
     required String body,
   }) async {
+    // 标题走 MCDB。
     var locTitle = title;
-    var locDesc = description;
-
-    if (platform == platformModrinth) {
+    if (titleEnabled && platform == platformModrinth) {
       try {
         final rows = await McdbClient.lookupByIds({projectId});
         final row = rows[projectId];
-        if (row != null) {
-          locTitle = row.zh.isNotEmpty ? row.zh : title;
-          locDesc = row.descZh ?? description;
+        if (row != null && row.zh.trim().isNotEmpty) {
+          locTitle = row.zh;
         }
       } catch (e) {
-        debugPrint('localizeDetail mcdb failed: $e');
+        debugPrint('localizeDetail mcdb title failed: $e');
       }
     }
 
+    // 简介走 MCIM。
+    var locDesc = description;
+    if (descriptionEnabled) {
+      final mcimZh = await McimApi.fetchTranslation(
+        platform: platform,
+        id: projectId,
+      );
+      if (mcimZh != null && mcimZh.trim().isNotEmpty) {
+        locDesc = mcimZh;
+      }
+    }
+
+    // 正文走云翻译 + 哈希缓存。
     final overview = body.trim().isNotEmpty ? body : description;
     final zhBody = detailBodyEnabled
         ? await _localizeBody(
@@ -259,6 +328,58 @@ class DiscoverTranslation {
       description: locDesc,
       body: zhBody,
     );
+  }
+
+  /// 纯文本云翻译 + 哈希持久缓存（标题/简介等短文本）。
+  static Future<String> _localizeText({
+    required String platform,
+    required String projectId,
+    required String kind,
+    required String source,
+  }) async {
+    final trimmed = source.trim();
+    if (trimmed.isEmpty) return source;
+    if (MicrosoftTranslator.isMostlyChinese(trimmed)) return trimmed;
+
+    try {
+      final hash = await i18n.textI18NHash(
+        platform: platform,
+        projectId: projectId,
+        kind: kind,
+        sourceText: trimmed,
+      );
+      final cached = await i18n.getTextI18N(contentHash: hash);
+      if (cached != null && cached.zhText.trim().isNotEmpty) {
+        return cached.zhText;
+      }
+
+      final zh = await ContentTranslator.translateToZhHans(trimmed, html: false);
+      if (zh.trim().isNotEmpty && zh != trimmed) {
+        unawaited(i18n.upsertTextI18N(
+          contentHash: hash,
+          platform: platform,
+          projectId: projectId,
+          kind: kind,
+          sourceText: trimmed,
+          zhText: zh,
+          provider: ContentTranslator.providerId,
+        ));
+      }
+      return zh;
+    } catch (e) {
+      debugPrint('localize $kind failed: $e');
+      return source;
+    }
+  }
+
+  /// 仅正文云翻译（带哈希缓存）。标题/简介由加载时的 MCDB/MCIM 处理。
+  static Future<String> localizeBody({
+    required String platform,
+    required String projectId,
+    required String overview,
+  }) async {
+    if (!detailBodyEnabled) return overview;
+    return _localizeBody(platform: platform, projectId: projectId, overview: overview);
   }
 
   static Future<String> _localizeBody({

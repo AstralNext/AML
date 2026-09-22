@@ -120,10 +120,12 @@ class ModrinthApiService {
       throw Exception('加载版本失败: ${response.statusCode}');
     }
     final list = jsonDecode(response.body) as List<dynamic>;
-    return list
-        .whereType<Map<String, dynamic>>()
-        .map(ModrinthVersionInfo.fromJson)
-        .toList();
+    return sortVersionsNewestFirst(
+      list
+          .whereType<Map<String, dynamic>>()
+          .map(ModrinthVersionInfo.fromJson)
+          .toList(),
+    );
   }
 
   static Future<ModrinthSearchResult> searchProjects({
@@ -185,8 +187,14 @@ class ModrinthApiService {
       if (response.statusCode != 200) return null;
       final list = jsonDecode(response.body) as List<dynamic>;
       if (list.isEmpty) return null;
-      final first = list.first as Map<String, dynamic>;
-      return first['id'] as String?;
+      final versions = sortVersionsNewestFirst(
+        list
+            .whereType<Map<String, dynamic>>()
+            .map(ModrinthVersionInfo.fromJson)
+            .toList(),
+      );
+      // 默认安装最新正式版，没有再退 Beta / Alpha。
+      return pickPreferredVersion(versions)?.id;
     } catch (_) {
       return null;
     }
@@ -217,7 +225,13 @@ class ModrinthApiService {
       if (list.isEmpty) {
         return null;
       }
-      return (list.first as Map<String, dynamic>)['id'] as String?;
+      final versions = sortVersionsNewestFirst(
+        list
+            .whereType<Map<String, dynamic>>()
+            .map(ModrinthVersionInfo.fromJson)
+            .toList(),
+      );
+      return pickPreferredVersion(versions)?.id;
     } catch (_) {
       return null;
     }
@@ -291,7 +305,8 @@ class ModrinthApiService {
   static Future<List<ModrinthAuthorProject>> getUserProjects(
     String idOrUsername,
   ) async {
-    final response = await _get(Uri.parse('$baseUrl/user/$idOrUsername/projects'));
+    final response =
+        await _get(Uri.parse('$baseUrl/user/$idOrUsername/projects'));
     if (response.statusCode != 200) {
       throw Exception('加载作者项目失败: ${response.statusCode}');
     }

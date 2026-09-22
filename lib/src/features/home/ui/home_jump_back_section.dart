@@ -74,10 +74,17 @@ class _HomeJumpBackSectionState extends State<HomeJumpBackSection> {
   }
 
   void _notifySummary() {
-    widget.onSummaryChanged?.call(
-      _jumpLoading,
-      _jumpItems.isEmpty ? null : _jumpItems.first,
-    );
+    final loading = _jumpLoading;
+    final first = _jumpItems.isEmpty ? null : _jumpItems.first;
+    final cb = widget.onSummaryChanged;
+    if (cb == null) return;
+    // Defer to post-frame: _notifySummary may be reached synchronously from
+    // initState (e.g. when the instance list is empty), and the parent
+    // callback calls setState on HomePage while it is still building.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      cb(loading, first);
+    });
   }
 
   DateTime? _parseInstancePlayed(String? rfc3339) {

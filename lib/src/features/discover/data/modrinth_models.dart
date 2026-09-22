@@ -225,6 +225,34 @@ class ModrinthProjectDetail {
     return body.isNotEmpty ? body : description;
   }
 
+  /// Build a partial detail from list/search preview data so the detail page
+  /// can paint the header instantly without waiting for the full detail API.
+  /// Fields the preview lacks (body, gallery, gameVersions, loaders, license,
+  /// dates) are left empty; the real detail fetch fills them in.
+  factory ModrinthProjectDetail.fromPreview(ProjectPreview preview) {
+    return ModrinthProjectDetail(
+      id: preview.id,
+      slug: preview.slug,
+      title: preview.title,
+      description: preview.description,
+      body: '',
+      categories: preview.categories,
+      clientSide: preview.clientSide,
+      serverSide: preview.serverSide,
+      projectType: preview.projectType,
+      downloads: preview.downloads,
+      followers: preview.followers,
+      iconUrl: preview.iconUrl,
+      gameVersions: const [],
+      loaders: const [],
+      published: '',
+      updated: '',
+      gallery: const [],
+      licenseId: '',
+      licenseName: '',
+    );
+  }
+
   factory ModrinthProjectDetail.fromJson(Map<String, dynamic> json) {
     final license = json['license'];
     String licenseId = '';

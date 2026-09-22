@@ -36,6 +36,7 @@ class _MainScreenState extends State<MainScreen>
   late final AppStore _appStore = getIt<AppStore>();
   late final ProgressStore _progressStore = getIt<ProgressStore>();
   late final NavigationState _navigation = getIt<NavigationState>();
+
   /// Built on first visit so Discover/Wardrobe initState do not run at cold start.
   final Map<String, Widget> _tabWidgets = {};
 
@@ -144,9 +145,8 @@ class _MainScreenState extends State<MainScreen>
     final currentPage = _appStore.navigation.currentPage.watch(context);
     final selectedIndex =
         MainNavigationConfig.pages.indexWhere((page) => page.id == currentPage);
-    final activeId = selectedIndex != -1
-        ? currentPage
-        : MainNavigationConfig.pages.first.id;
+    final activeId =
+        selectedIndex != -1 ? currentPage : MainNavigationConfig.pages.first.id;
     _ensureTab(activeId);
 
     // Keep visited tabs mounted under overlays so library filters / scroll survive
@@ -162,36 +162,48 @@ class _MainScreenState extends State<MainScreen>
       }).toList(),
     );
 
-    Widget? overlay;
-    if (projectId != null) {
-      overlay = ProjectDetailPage(
-        key: ValueKey('project:$projectId'),
-        projectId: projectId,
-        preview: _navigation.selectedProjectPreview.value,
-      );
-    } else if (authorId != null) {
-      final authorType = _navigation.selectedAuthorType.value;
-      overlay = AuthorDetailPage(
-        key: ValueKey('author:$authorType:$authorId'),
-        authorId: authorId,
-        authorType: authorType,
-        preview: _navigation.selectedAuthorPreview.value,
-      );
-    } else if (instanceId != null) {
+    // 层级堆叠：项目详情 > 作者详情 > 世界/实例详情 > 主标签页。
+    // 下层 overlay 保持挂载（Offstage），这样从项目详情返回实例详情时，
+    // 实例详情的标签页、滚动位置、列表状态都不会丢失。
+    final showBase = projectId == null && authorId == null && instanceId == null;
+    final showInstance = instanceId != null && projectId == null && authorId == null;
+    final showAuthor = authorId != null && projectId == null;
+
+    Widget? instanceOverlay;
+    if (instanceId != null) {
       final world = _navigation.selectedWorld.watch(context);
       if (world != null) {
-        overlay = WorldDetailPage(
+        instanceOverlay = WorldDetailPage(
           key: ValueKey('world:$instanceId:${world.folder}'),
           instanceId: instanceId,
           world: world,
         );
       } else {
-        // Key forces a fresh State so mods/files/worlds/logs reload with the instance.
-        overlay = InstanceDetailPage(
+        instanceOverlay = InstanceDetailPage(
           key: ValueKey('instance:$instanceId'),
           instanceId: instanceId,
         );
       }
+    }
+
+    Widget? authorOverlay;
+    if (authorId != null) {
+      final authorType = _navigation.selectedAuthorType.value;
+      authorOverlay = AuthorDetailPage(
+        key: ValueKey('author:$authorType:$authorId'),
+        authorId: authorId,
+        authorType: authorType,
+        preview: _navigation.selectedAuthorPreview.value,
+      );
+    }
+
+    Widget? projectOverlay;
+    if (projectId != null) {
+      projectOverlay = ProjectDetailPage(
+        key: ValueKey('project:$projectId'),
+        projectId: projectId,
+        preview: _navigation.selectedProjectPreview.value,
+      );
     }
 
     // Always keep the same Stack → Offstage → IndexedStack shape. Switching
@@ -201,13 +213,29 @@ class _MainScreenState extends State<MainScreen>
       fit: StackFit.expand,
       children: [
         Offstage(
-          offstage: overlay != null,
+          offstage: !showBase,
           child: TickerMode(
-            enabled: overlay == null,
+            enabled: showBase,
             child: base,
           ),
         ),
-        if (overlay != null) overlay,
+        if (instanceOverlay != null)
+          Offstage(
+            offstage: !showInstance,
+            child: TickerMode(
+              enabled: showInstance,
+              child: instanceOverlay,
+            ),
+          ),
+        if (authorOverlay != null)
+          Offstage(
+            offstage: !showAuthor,
+            child: TickerMode(
+              enabled: showAuthor,
+              child: authorOverlay,
+            ),
+          ),
+        if (projectOverlay != null) projectOverlay,
       ],
     );
   }
@@ -258,8 +286,8 @@ class _MainScreenState extends State<MainScreen>
               ),
             ],
           ),
-          if (_progressStore.progressVisibility.watch(context))
-            const ProgressBox(),
+          // 常驻挂载，由 ProgressBox 内部根据 progressVisibility 播放进/退场动画。
+          const ProgressBox(),
         ],
       ),
     );
