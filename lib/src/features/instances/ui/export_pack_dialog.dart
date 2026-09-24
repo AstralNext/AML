@@ -3,6 +3,7 @@ import 'package:aml/src/features/instances/application/instance_store.dart';
 import 'package:aml/src/rust/api/launcher.dart' as rust;
 import 'package:aml/src/shared/theme/app_theme_tokens.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/widgets/components/buttons/button_group_widget.dart';
 import 'package:aml/src/shared/widgets/components/buttons/custom_button.dart';
 import 'package:aml/src/shared/widgets/components/cached_remote_image.dart';
@@ -280,227 +281,281 @@ class _ExportPackDialogState extends State<ExportPackDialog>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
-                height: 64,
-                child: Row(
-                  children: [
-                    const SizedBox(width: 28),
-                    Text(
-                      '导出整合包',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: tokens.colorContrast,
-                      ),
-                    ),
-                    const Spacer(),
-                    CustomButton(
-                      icon: Icons.close,
-                      size: ButtonSize.medium,
-                      backgroundColor: tokens.colorButtonBg.withAlpha(80),
-                      onTap: _exporting ? () {} : _close,
-                    ),
-                    const SizedBox(width: 22),
-                  ],
-                ),
-              ),
+              _buildHeader(tokens),
               Divider(
                 height: 1,
                 thickness: 1,
                 color: tokens.colorSecondary.withAlpha(35),
               ),
-              Flexible(
-                child: _loading
-                    ? const Padding(
-                        padding: EdgeInsets.all(40),
-                        child: Center(
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(28, 20, 28, 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (_preview != null) ...[
-                              Text(
-                                '${_preview!.gameVersion} · ${_preview!.loader}',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color:
-                                      tokens.colorBase.withValues(alpha: 0.7),
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                            ],
-                            Text(
-                              '名称',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: tokens.colorContrast,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            InputBarWidget(
-                              colorScheme: scheme,
-                              controller: _nameController,
-                              size: InputBarSize.medium,
-                              hintText: '整合包名称',
-                            ),
-                            const SizedBox(height: 14),
-                            Text(
-                              '版本',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: tokens.colorContrast,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            InputBarWidget(
-                              colorScheme: scheme,
-                              controller: _versionController,
-                              size: InputBarSize.medium,
-                              hintText: '例如 1.0.0',
-                            ),
-                            const SizedBox(height: 14),
-                            Text(
-                              '描述（可选）',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: tokens.colorContrast,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            InputBarWidget(
-                              colorScheme: scheme,
-                              controller: _descriptionController,
-                              size: InputBarSize.medium,
-                              hintText: '简短说明',
-                            ),
-                            const SizedBox(height: 18),
-                            Text(
-                              '导出格式',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: tokens.colorContrast,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            IgnorePointer(
-                              ignoring: _exporting,
-                              child: ButtonGroupWidget(
-                                fitContent: true,
-                                selectedValue: _format,
-                                selectedIcon: null,
-                                onChanged: (value) =>
-                                    setState(() => _format = value),
-                                items: const [
-                                  ButtonGroupItem(
-                                    value: 'mrpack',
-                                    text: 'Modrinth',
-                                  ),
-                                  ButtonGroupItem(
-                                    value: 'multimc',
-                                    text: 'MultiMC',
-                                  ),
-                                  ButtonGroupItem(
-                                    value: 'mcbbs',
-                                    text: 'MCBBS',
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 18),
-                            Row(
-                              children: [
-                                Text(
-                                  '导出内容',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: tokens.colorContrast,
-                                  ),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  '已选 ${_selectedPaths.length} 项',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: tokens.colorBase
-                                        .withValues(alpha: 0.65),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '可勾选分类或单个文件；模组/资源包等会显示图标。',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: tokens.colorBase.withValues(alpha: 0.65),
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            ..._orderedCategories.map(
-                              (cat) => _CategoryBlock(
-                                tokens: tokens,
-                                category: cat,
-                                checkState: _categoryCheckState(cat),
-                                expanded: _expanded.contains(cat.id),
-                                selectedPaths: _selectedPaths,
-                                enabled: !_exporting,
-                                onToggleCategory: (v) =>
-                                    _setCategorySelected(cat, v),
-                                onToggleExpand: () => setState(() {
-                                  if (_expanded.contains(cat.id)) {
-                                    _expanded.remove(cat.id);
-                                  } else {
-                                    _expanded.add(cat.id);
-                                  }
-                                }),
-                                onToggleFile: _toggleFile,
-                              ),
-                            ),
-                            if (_error != null) ...[
-                              const SizedBox(height: 12),
-                              Text(
-                                _error!,
-                                style: TextStyle(
-                                  color: scheme.error,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(28, 8, 28, 22),
-                child: Row(
-                  children: [
-                    NavRectButton(
-                      text: '取消',
-                      icon: Icons.close,
-                      isSelected: false,
-                      defaultBackgroundColor: tokens.colorButtonBg,
-                      defaultColor: tokens.colorContrast,
-                      hoverColor: tokens.colorButtonBgSelected,
-                      hoverTextColor: tokens.colorButtonTextSelected,
-                      onTap: _exporting ? () {} : _close,
-                    ),
-                    const Spacer(),
-                    NavRectButton(
-                      text: _exporting ? '导出中…' : '开始导出',
-                      icon: Icons.upload_file_outlined,
-                      isSelected: true,
-                      onTap: (_exporting || _loading) ? () {} : _startExport,
-                    ),
-                  ],
-                ),
-              ),
+              _buildBody(tokens, scheme),
+              _buildFooter(tokens),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// 顶部标题栏：标题与关闭按钮。
+  Widget _buildHeader(AppThemeTokens tokens) {
+    return SizedBox(
+      height: 64,
+      child: Row(
+        children: [
+          const SizedBox(width: 28),
+          Text(
+            '导出整合包',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: tokens.colorContrast,
+            ),
+          ),
+          const Spacer(),
+          CustomButton(
+            icon: Icons.close,
+            size: ButtonSize.medium,
+            backgroundColor: tokens.colorButtonBg.withAlpha(80),
+            onTap: _exporting ? () {} : _close,
+          ),
+          const SizedBox(width: 22),
+        ],
+      ),
+    );
+  }
+
+  /// 中部内容区：加载占位或导出配置表单。
+  Widget _buildBody(AppThemeTokens tokens, ColorScheme scheme) {
+    return Flexible(
+      child: _loading
+          ? _buildLoadingView()
+          : SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(28, 20, 28, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: _buildFormChildren(tokens, scheme),
+              ),
+            ),
+    );
+  }
+
+  /// 加载预览时的居中转圈占位。
+  Widget _buildLoadingView() {
+    return const Padding(
+      padding: EdgeInsets.all(40),
+      child: Center(
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+    );
+  }
+
+  /// 表单子项：基本信息、导出格式、导出内容与错误提示。
+  List<Widget> _buildFormChildren(AppThemeTokens tokens, ColorScheme scheme) {
+    return [
+      ..._buildPackInfoFields(tokens, scheme),
+      ..._buildFormatSection(tokens),
+      ..._buildContentSection(tokens),
+      ..._buildCategoryList(tokens),
+      if (_error != null) ..._buildErrorLine(scheme),
+    ];
+  }
+
+  /// 预览信息行与名称、版本、描述输入区。
+  List<Widget> _buildPackInfoFields(AppThemeTokens tokens, ColorScheme scheme) {
+    return [
+      if (_preview != null) ...[
+        Text(
+          '${_preview!.gameVersion} · ${_preview!.loader}',
+          style: TextStyle(
+            fontSize: 13,
+            color: tokens.colorBase.withValues(alpha: 0.7),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ],
+      Text(
+        '名称',
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          color: tokens.colorContrast,
+        ),
+      ),
+      const SizedBox(height: 8),
+      InputBarWidget(
+        colorScheme: scheme,
+        controller: _nameController,
+        size: InputBarSize.medium,
+        hintText: '整合包名称',
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '版本',
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          color: tokens.colorContrast,
+        ),
+      ),
+      const SizedBox(height: 8),
+      InputBarWidget(
+        colorScheme: scheme,
+        controller: _versionController,
+        size: InputBarSize.medium,
+        hintText: '例如 1.0.0',
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '描述（可选）',
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          color: tokens.colorContrast,
+        ),
+      ),
+      const SizedBox(height: 8),
+      InputBarWidget(
+        colorScheme: scheme,
+        controller: _descriptionController,
+        size: InputBarSize.medium,
+        hintText: '简短说明',
+      ),
+      const SizedBox(height: 18),
+    ];
+  }
+
+  /// 导出格式标题与格式选择按钮组。
+  List<Widget> _buildFormatSection(AppThemeTokens tokens) {
+    return [
+      Text(
+        '导出格式',
+        style: TextStyle(
+          fontWeight: FontWeight.w700,
+          color: tokens.colorContrast,
+        ),
+      ),
+      const SizedBox(height: 8),
+      IgnorePointer(
+        ignoring: _exporting,
+        child: ButtonGroupWidget(
+          fitContent: true,
+          selectedValue: _format,
+          selectedIcon: null,
+          onChanged: (value) => setState(() => _format = value),
+          items: const [
+            ButtonGroupItem(
+              value: 'mrpack',
+              text: 'Modrinth',
+            ),
+            ButtonGroupItem(
+              value: 'multimc',
+              text: 'MultiMC',
+            ),
+            ButtonGroupItem(
+              value: 'mcbbs',
+              text: 'MCBBS',
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+    ];
+  }
+
+  /// 导出内容标题行、已选计数与勾选提示。
+  List<Widget> _buildContentSection(AppThemeTokens tokens) {
+    return [
+      Row(
+        children: [
+          Text(
+            '导出内容',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: tokens.colorContrast,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            '已选 ${_selectedPaths.length} 项',
+            style: TextStyle(
+              fontSize: 12,
+              color: tokens.colorBase.withValues(alpha: 0.65),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 4),
+      Text(
+        '可勾选分类或单个文件；模组/资源包等会显示图标。',
+        style: TextStyle(
+          fontSize: 12,
+          color: tokens.colorBase.withValues(alpha: 0.65),
+        ),
+      ),
+      const SizedBox(height: 10),
+    ];
+  }
+
+  /// 按固定顺序排列的分类勾选块列表。
+  List<Widget> _buildCategoryList(AppThemeTokens tokens) {
+    return _orderedCategories
+        .map(
+          (cat) => _CategoryBlock(
+            tokens: tokens,
+            category: cat,
+            checkState: _categoryCheckState(cat),
+            expanded: _expanded.contains(cat.id),
+            selectedPaths: _selectedPaths,
+            enabled: !_exporting,
+            onToggleCategory: (v) => _setCategorySelected(cat, v),
+            onToggleExpand: () => setState(() {
+              if (_expanded.contains(cat.id)) {
+                _expanded.remove(cat.id);
+              } else {
+                _expanded.add(cat.id);
+              }
+            }),
+            onToggleFile: _toggleFile,
+          ),
+        )
+        .toList();
+  }
+
+  /// 表单底部的错误信息文本。
+  List<Widget> _buildErrorLine(ColorScheme scheme) {
+    return [
+      const SizedBox(height: 12),
+      Text(
+        _error!,
+        style: TextStyle(
+          color: scheme.error,
+          fontSize: 12,
+        ),
+      ),
+    ];
+  }
+
+  /// 底部操作栏：取消与开始导出按钮。
+  Widget _buildFooter(AppThemeTokens tokens) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 8, 28, 22),
+      child: Row(
+        children: [
+          NavRectButton(
+            text: '取消',
+            icon: Icons.close,
+            isSelected: false,
+            defaultBackgroundColor: tokens.colorButtonBg,
+            defaultColor: tokens.colorContrast,
+            hoverColor: tokens.colorButtonBgSelected,
+            hoverTextColor: tokens.colorButtonTextSelected,
+            onTap: _exporting ? () {} : _close,
+          ),
+          const Spacer(),
+          NavRectButton(
+            text: _exporting ? '导出中…' : '开始导出',
+            icon: Icons.upload_file_outlined,
+            isSelected: true,
+            onTap: (_exporting || _loading) ? () {} : _startExport,
+          ),
+        ],
       ),
     );
   }
@@ -541,82 +596,91 @@ class _CategoryBlock extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 2, 6, 2),
-              child: Row(
-                children: [
-                  Checkbox(
-                    tristate: true,
-                    value: empty ? false : checkState,
-                    activeColor: tokens.colorBrand,
-                    onChanged: (!enabled || empty)
-                        ? null
-                        : (v) => onToggleCategory(v ?? false),
-                  ),
-                  Icon(
-                    _categoryIcon(category.id),
-                    size: 18,
-                    color: empty
-                        ? tokens.colorBase.withValues(alpha: 0.4)
-                        : tokens.colorBrand,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          category.label,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: empty
-                                ? tokens.colorBase.withValues(alpha: 0.55)
-                                : tokens.colorContrast,
-                          ),
-                        ),
-                        Text(
-                          empty
-                              ? '无文件'
-                              : '$selectedCount / ${category.fileCount} · ${_formatBytes(category.totalBytes)}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: tokens.colorBase.withValues(alpha: 0.65),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (!empty)
-                    IconButton(
-                      tooltip: expanded ? '收起' : '展开',
-                      onPressed: onToggleExpand,
-                      icon: Icon(
-                        expanded ? Icons.expand_less : Icons.expand_more,
-                        color: tokens.colorBase,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            if (expanded && !empty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 10, 10),
-                child: Column(
-                  children: [
-                    for (final file in category.files)
-                      _FileRow(
-                        tokens: tokens,
-                        file: file,
-                        categoryId: category.id,
-                        selected: selectedPaths.contains(file.path),
-                        enabled: enabled,
-                        onToggle: () => onToggleFile(file.path),
-                      ),
-                  ],
-                ),
-              ),
+            _buildCategoryHeader(empty, selectedCount),
+            if (expanded && !empty) _buildFileList(),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 分类头部：勾选框、图标、名称统计与展开按钮。
+  Widget _buildCategoryHeader(bool empty, int selectedCount) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 2, 6, 2),
+      child: Row(
+        children: [
+          Checkbox(
+            tristate: true,
+            value: empty ? false : checkState,
+            activeColor: tokens.colorBrand,
+            onChanged: (!enabled || empty)
+                ? null
+                : (v) => onToggleCategory(v ?? false),
+          ),
+          Icon(
+            _categoryIcon(category.id),
+            size: 18,
+            color: empty
+                ? tokens.colorBase.withValues(alpha: 0.4)
+                : tokens.colorBrand,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  category.label,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: empty
+                        ? tokens.colorBase.withValues(alpha: 0.55)
+                        : tokens.colorContrast,
+                  ),
+                ),
+                Text(
+                  empty
+                      ? '无文件'
+                      : '$selectedCount / ${category.fileCount} · ${formatBytes(category.totalBytes.toInt())}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: tokens.colorBase.withValues(alpha: 0.65),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!empty)
+            IconButton(
+              tooltip: expanded ? '收起' : '展开',
+              onPressed: onToggleExpand,
+              icon: Icon(
+                expanded ? Icons.expand_less : Icons.expand_more,
+                color: tokens.colorBase,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 展开后的文件勾选行列表。
+  Widget _buildFileList() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 10, 10),
+      child: Column(
+        children: [
+          for (final file in category.files)
+            _FileRow(
+              tokens: tokens,
+              file: file,
+              categoryId: category.id,
+              selected: selectedPaths.contains(file.path),
+              enabled: enabled,
+              onToggle: () => onToggleFile(file.path),
+            ),
+        ],
       ),
     );
   }
@@ -679,7 +743,7 @@ class _FileRow extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '${file.name} · ${_formatBytes(file.sizeBytes)}',
+                      '${file.name} · ${formatBytes(file.sizeBytes.toInt())}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -756,14 +820,4 @@ IconData _categoryIcon(String id) {
     'saves' => Icons.public_outlined,
     _ => Icons.insert_drive_file_outlined,
   };
-}
-
-String _formatBytes(BigInt bytes) {
-  final n = bytes.toDouble();
-  if (n < 1024) return '${n.toInt()} B';
-  if (n < 1024 * 1024) return '${(n / 1024).toStringAsFixed(1)} KB';
-  if (n < 1024 * 1024 * 1024) {
-    return '${(n / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-  return '${(n / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }

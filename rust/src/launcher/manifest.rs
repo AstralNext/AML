@@ -108,7 +108,6 @@ pub async fn list_game_versions(resource_dir: &str) -> Result<Vec<GameVersionDto
         .map(|v| GameVersionDto {
             id: v.id,
             type_: v.type_.as_str().to_string(),
-            url: v.url,
             release_time: v.release_time.to_rfc3339(),
         })
         .collect())
@@ -118,7 +117,6 @@ pub async fn list_game_versions(resource_dir: &str) -> Result<Vec<GameVersionDto
 pub struct GameVersionDto {
     pub id: String,
     pub type_: String,
-    pub url: String,
     pub release_time: String,
 }
 

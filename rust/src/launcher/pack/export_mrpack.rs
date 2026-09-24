@@ -64,6 +64,8 @@ struct ModrinthHashesApi {
 }
 
 /// Export an instance to a `.mrpack` archive.
+// Internal export entrypoint behind the FFI wrapper.
+#[allow(clippy::too_many_arguments)]
 pub async fn export_instance_mrpack(
     instance_id: &str,
     export_path: &str,

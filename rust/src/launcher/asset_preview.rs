@@ -67,7 +67,6 @@ struct ZipSource {
     label: String,
     kind: String,
     path: PathBuf,
-    priority: i32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -326,7 +325,6 @@ fn scan_blocking(
             label: format!("游戏本体 · {_game_version}"),
             kind: "vanilla".into(),
             path: client_jar.to_path_buf(),
-            priority: 0,
         });
     }
 
@@ -350,7 +348,6 @@ fn scan_blocking(
                 label: format!("Mod · {name}"),
                 kind: "mod".into(),
                 path,
-                priority: 10,
             });
         }
     }
@@ -372,7 +369,6 @@ fn scan_blocking(
                 label: format!("资源包 · {name}"),
                 kind: "resourcepack".into(),
                 path,
-                priority: 20,
             });
         }
     }
@@ -600,6 +596,8 @@ struct ResolvedModelInternal {
     gui_scale: Option<f64>,
 }
 
+// Recursive model-rendering helpers thread one shared resolution context.
+#[allow(clippy::too_many_arguments)]
 fn resolve_model_json(
     archives: &AssetArchives<'_>,
     namespace: &str,
@@ -833,6 +831,8 @@ fn resolve_texture_ref(reference: &str, namespace: &str) -> String {
     }
 }
 
+// Recursive model-rendering helpers thread one shared resolution context.
+#[allow(clippy::too_many_arguments)]
 fn parse_elements(
     elements: &[serde_json::Value],
     textures_map: &HashMap<String, String>,
@@ -902,8 +902,7 @@ fn resolve_face_texture(
     textures_map: &HashMap<String, String>,
     namespace: &str,
 ) -> String {
-    if key.starts_with('#') {
-        let var_name = &key[1..];
+    if let Some(var_name) = key.strip_prefix('#') {
         if let Some(resolved) = textures_map.get(var_name) {
             return resolve_texture_ref(resolved, namespace);
         }
@@ -911,6 +910,8 @@ fn resolve_face_texture(
     resolve_texture_ref(key, namespace)
 }
 
+// Recursive model-rendering helpers thread one shared resolution context.
+#[allow(clippy::too_many_arguments)]
 fn load_texture_index(
     texture_ref: &str,
     archives: &AssetArchives<'_>,
@@ -968,6 +969,8 @@ fn read_texture_by_ref(
     )
 }
 
+// Recursive model-rendering helpers thread one shared resolution context.
+#[allow(clippy::too_many_arguments)]
 fn read_texture_bytes(
     archives: &AssetArchives<'_>,
     asset_path: &str,

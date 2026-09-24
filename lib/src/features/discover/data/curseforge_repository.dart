@@ -93,21 +93,33 @@ class CurseForgeRepository implements DiscoverRepository {
       );
     }).toList();
 
-    // 简介走 MCIM 批量汉化。
-    if (DiscoverTranslation.descriptionEnabled) {
+    // 简介走 Rust 统一编排：本地缓存命中直返，缺失批量拉 MCIM 并回写。
+    if (DiscoverTranslation.descriptionEnabled && mods.isNotEmpty) {
       try {
-        final modIds = mods.map((m) => m.id).toList();
-        final mcimDescs =
-            await McimApi.fetchCurseForgeTranslationsBatch(modIds: modIds);
-        if (mcimDescs.isNotEmpty) {
+        final localized =
+            await DiscoverTranslation.localizeProjects(
+          platform: DiscoverTranslation.platformCurseforge,
+          projects: [
+            for (final m in mods)
+              (
+                id: '${m.id}',
+                slug: m.slug.isNotEmpty ? m.slug : null,
+                title: m.name,
+                description: m.summary,
+              ),
+          ],
+        );
+        if (localized.isNotEmpty) {
           projects = projects.map((p) {
             final cfId = parseCurseForgeModId(p.id);
-            final zh = cfId != null ? mcimDescs['$cfId'] : null;
-            return zh != null ? p.copyWith(description: zh) : p;
+            final zh = cfId != null ? localized['$cfId']?.description : null;
+            return zh != null && zh != p.description
+                ? p.copyWith(description: zh)
+                : p;
           }).toList();
         }
       } catch (e) {
-        debugPrint('[Discover/CF] mcim desc failed: $e');
+        debugPrint('[Discover/CF] localize summaries failed: $e');
       }
     }
 

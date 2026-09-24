@@ -6,7 +6,6 @@ import 'package:aml/src/features/discover/application/content_install_helper.dar
 import 'package:aml/src/features/discover/data/curseforge_api.dart';
 import 'package:aml/src/features/discover/data/discover_ids.dart';
 import 'package:aml/src/features/discover/data/discover_translation.dart';
-import 'package:aml/src/features/discover/data/mcim_api.dart';
 import 'package:aml/src/features/discover/data/modrinth_api.dart';
 import 'package:aml/src/features/discover/ui/content_install_modal.dart';
 import 'package:aml/src/features/discover/ui/content_version_picker.dart';
@@ -211,26 +210,17 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
           ? (cfModId?.toString() ?? widget.projectId)
           : widget.projectId;
 
-      final zhTitle = await DiscoverTranslation.localizeTitle(
+      final header = await DiscoverTranslation.localizeHeader(
         platform: platformStr,
         projectId: projectIdStr,
+        slug: project.slug.isNotEmpty ? project.slug : null,
         title: project.title,
+        description: project.description,
       );
 
-      String zhDesc = project.description;
-      if (DiscoverTranslation.descriptionEnabled) {
-        final mcimDesc = await McimApi.fetchTranslation(
-          platform: platformStr,
-          id: projectIdStr,
-        );
-        if (mcimDesc != null && mcimDesc.trim().isNotEmpty) {
-          zhDesc = mcimDesc;
-        }
-      }
-
       final localizedProject = project.copyWith(
-        title: zhTitle,
-        description: zhDesc,
+        title: header.title,
+        description: header.description,
         sourceTitle: project.title,
         sourceDescription: project.description,
       );
@@ -266,10 +256,6 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         project.body.trim().isNotEmpty ? project.body : project.description;
     try {
       final isCf = isCurseForgeProjectId(project.id);
-      print(
-        '[translate] body start: id=${project.id} isCf=$isCf '
-        'bodyLen=${sourceBody.length}',
-      );
       final zhBody = await DiscoverTranslation.localizeBody(
         platform: isCf
             ? DiscoverTranslation.platformCurseforge
@@ -282,9 +268,6 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
       if (!mounted) return;
       if (_project?.id != project.id) return;
       final changed = zhBody != sourceBody;
-      print(
-        '[translate] body done: changed=$changed zhLen=${zhBody.length}',
-      );
       setState(() {
         _project = project.copyWith(
           body: zhBody,
@@ -294,8 +277,8 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
       if (!changed) {
         showAppSnackBar('翻译未返回结果，已保持原文');
       }
-    } catch (e, st) {
-      print('[translate] body error: $e\n$st');
+    } catch (e) {
+      debugPrint('[translate] body failed: $e');
       if (mounted) showAppSnackBar('翻译失败：$e');
     } finally {
       if (mounted) setState(() => _translating = false);

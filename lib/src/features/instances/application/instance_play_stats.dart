@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:path/path.dart' as p;
 
 /// One numeric stat entry from a Minecraft stats JSON file.
@@ -347,14 +348,4 @@ String formatDistanceBlocks(int cm) {
   }
   final km = blocks / 1000.0;
   return '${km.toStringAsFixed(km < 10 ? 2 : 1)} km';
-}
-
-String formatCount(int n) {
-  if (n < 10000) return '$n';
-  if (n < 1000000) {
-    final k = n / 1000.0;
-    return '${k.toStringAsFixed(k < 10 ? 1 : 0)}k';
-  }
-  final m = n / 1000000.0;
-  return '${m.toStringAsFixed(m < 10 ? 1 : 0)}M';
 }

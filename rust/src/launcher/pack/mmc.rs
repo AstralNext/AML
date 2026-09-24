@@ -15,7 +15,6 @@ pub struct MmcPackMeta {
     pub loader: ModLoader,
     pub loader_version: Option<String>,
     pub minecraft_prefix: String,
-    pub zip_prefix: String,
 }
 
 #[derive(Deserialize)]
@@ -90,7 +89,6 @@ pub fn read_mmc_meta_from_zip(data: &[u8]) -> Result<MmcPackMeta> {
         loader,
         loader_version,
         minecraft_prefix,
-        zip_prefix,
     })
 }
 
@@ -193,7 +191,6 @@ pub fn read_mmc_meta_from_dir(instance_dir: &Path) -> Result<(MmcPackMeta, PathB
             loader,
             loader_version,
             minecraft_prefix: String::new(),
-            zip_prefix: String::new(),
         },
         minecraft_dir,
     ))

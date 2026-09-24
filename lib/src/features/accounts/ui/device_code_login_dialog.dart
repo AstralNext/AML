@@ -281,11 +281,11 @@ class _DeviceCodeLoginDialogState extends State<DeviceCodeLoginDialog> {
                   await Clipboard.setData(ClipboardData(text: code));
                   if (!mounted) return;
                   ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                    SnackBar(
-                      content: const Text('已复制代码到剪贴板'),
-                      duration: const Duration(seconds: 2),
+                    const SnackBar(
+                      content: Text('已复制代码到剪贴板'),
+                      duration: Duration(seconds: 2),
                       behavior: SnackBarBehavior.floating,
-                      margin: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+                      margin: EdgeInsets.fromLTRB(16, 0, 16, 80),
                     ),
                   );
                 },

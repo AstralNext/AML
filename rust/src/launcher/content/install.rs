@@ -109,6 +109,8 @@ pub async fn install_modrinth_version(
     Ok(path.to_string_lossy().to_string())
 }
 
+// Install pipeline step; arguments are carried from the single orchestrator.
+#[allow(clippy::too_many_arguments)]
 async fn install_version_file(
     client: &reqwest::Client,
     pool: &sqlx::SqlitePool,
@@ -243,6 +245,9 @@ async fn install_version_file(
     Ok(dest)
 }
 
+// Dependency-resolution loop; the visited sets and install context live in
+// the single orchestrator.
+#[allow(clippy::too_many_arguments)]
 async fn install_required_deps(
     client: &reqwest::Client,
     pool: &sqlx::SqlitePool,

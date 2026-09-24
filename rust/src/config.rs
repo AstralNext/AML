@@ -105,11 +105,12 @@ impl Default for ProxySettings {
     }
 }
 
+/// Cached setting paired with the last-modified timestamp of its source file.
+type CachedSetting<T> = Mutex<Option<(Option<SystemTime>, T)>>;
+
 static CDN_RESOURCE_DIR: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
-static CDN_CACHE: Lazy<Mutex<Option<(Option<SystemTime>, CdnSettings)>>> =
-    Lazy::new(|| Mutex::new(None));
-static PROXY_CACHE: Lazy<Mutex<Option<(Option<SystemTime>, ProxySettings)>>> =
-    Lazy::new(|| Mutex::new(None));
+static CDN_CACHE: Lazy<CachedSetting<CdnSettings>> = Lazy::new(|| Mutex::new(None));
+static PROXY_CACHE: Lazy<CachedSetting<ProxySettings>> = Lazy::new(|| Mutex::new(None));
 
 pub fn set_cdn_resource_dir(dir: &str) {
     if let Ok(mut g) = CDN_RESOURCE_DIR.lock() {

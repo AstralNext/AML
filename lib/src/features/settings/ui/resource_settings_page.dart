@@ -4,6 +4,7 @@ import 'package:aml/src/app/di/service_locator.dart';
 import 'package:aml/src/features/settings/application/resource_settings_state.dart';
 import 'package:aml/src/features/settings/application/storage_usage_service.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/widgets/components/inputs/input_bar.dart';
 import 'package:aml/src/shared/widgets/components/navigation/nav_rect_button.dart';
 import 'package:file_picker/file_picker.dart';
@@ -71,7 +72,7 @@ class _ResourceSettingsPageState extends State<ResourceSettingsPage> {
 		if (report == null) return '正在细分扫描缓存与数据目录…';
 		final age = StorageUsageService.formatScanAge(report.scannedAt);
 		final base =
-			'合计 ${StorageUsageService.formatBytes(total)}'
+			'合计 ${formatBytes(total)}'
 			' · ${report.totalFiles} 个文件'
 			' · ${report.groups.length} 组'
 			' · 扫描于 $age';
@@ -473,7 +474,7 @@ class _StorageGroupCard extends StatelessWidget {
 													crossAxisAlignment: CrossAxisAlignment.end,
 													children: [
 														Text(
-															StorageUsageService.formatBytes(group.bytes),
+															formatBytes(group.bytes),
 															style: TextStyle(
 																fontSize: 14,
 																fontWeight: FontWeight.w700,
@@ -634,7 +635,7 @@ class _StorageItemTileState extends State<_StorageItemTile> {
 										),
 									),
 									Text(
-										StorageUsageService.formatBytes(item.bytes),
+										formatBytes(item.bytes),
 										style: TextStyle(
 											fontSize: 12.5,
 											fontWeight: FontWeight.w700,

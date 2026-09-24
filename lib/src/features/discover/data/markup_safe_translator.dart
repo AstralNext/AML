@@ -1,4 +1,3 @@
-import 'package:aml/src/features/discover/data/content_translator.dart';
 import 'package:aml/src/features/discover/data/discover_translation.dart';
 import 'package:aml/src/features/discover/data/microsoft_translator.dart';
 import 'package:flutter/foundation.dart';
@@ -39,7 +38,7 @@ class MarkupSafeTranslator {
       final heavy = <String>[];
       final slim = _stripHeavyAttrs(asHtml, heavy);
       final protected = protectSegments(slim);
-      final zh = await ContentTranslator.translateToZhHans(
+      final zh = await MicrosoftTranslator.translateToZhHans(
         protected.text,
         html: true,
       );
@@ -106,7 +105,7 @@ class MarkupSafeTranslator {
       text = text.replaceAllMapped(pattern, (m) {
         final idx = tokens.length;
         tokens.add(m[0]!);
-        return '&#xE000;AML$idx&#xE001;';
+        return MicrosoftTranslator.protectToken(idx);
       });
     }
     return (text: text, tokens: tokens);
@@ -121,13 +120,16 @@ class MarkupSafeTranslator {
 
   static String unprotectSegments(String html, List<String> tokens) {
     var out = html;
-    // Pass 1: exact variants (fast path).
+    // Pass 1: exact variants (fast path). All forms derive from
+    // MicrosoftTranslator.protectOpenEntity / protectCloseEntity.
+    const open = MicrosoftTranslator.protectOpenEntity;
+    const close = MicrosoftTranslator.protectCloseEntity;
     for (var i = 0; i < tokens.length; i++) {
       final variants = <String>[
-        '&#xE000;AML$i&#xE001;',
-        '\uE000AML$i\uE001',
-        '&#xe000;AML$i&#xe001;',
-        '&amp;#xE000;AML$i&amp;#xE001;',
+        MicrosoftTranslator.protectToken(i),
+        '${String.fromCharCode(0xE000)}AML$i${String.fromCharCode(0xE001)}',
+        '${open.toLowerCase()}AML$i${close.toLowerCase()}',
+        '&amp;${open.substring(1)}AML$i&amp;${close.substring(1)}',
       ];
       for (final v in variants) {
         if (out.contains(v)) {

@@ -5,7 +5,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -214,7 +214,9 @@ async fn download_file_once(
             }
         })
     };
-    let mut download = std::pin::pin!(crate::launcher::download::fetch_bytes_with_timeout(
+    // 注意：不要用 std::pin::pin! —— 新工具链下它会展开成 `super let`，
+    // FRB codegen 内嵌的 syn 2.0.26 解析不了，导致整包 generate 失败。
+    let mut download = Box::pin(crate::launcher::download::fetch_bytes_with_timeout(
         client,
         url,
         None,
@@ -245,6 +247,9 @@ async fn download_file_once(
     }
 }
 
+/// ZIP entry collected before extraction: (name, data, is_dir, unix_mode).
+type ZipEntry = (String, Option<Vec<u8>>, bool, Option<u32>);
+
 /// 解压ZIP文件
 async fn extract_zip(
     zip_data: &[u8],
@@ -258,8 +263,7 @@ async fn extract_zip(
     let mut archive = ZipArchive::new(cursor)?;
 
     let mut root_dir_name = None;
-    // (name, data, is_dir, unix_mode)
-    let mut file_entries: Vec<(String, Option<Vec<u8>>, bool, Option<u32>)> = Vec::new();
+    let mut file_entries: Vec<ZipEntry> = Vec::new();
     let total_files = archive.len();
 
     // 获取根目录名和所有文件信息
@@ -581,10 +585,7 @@ async fn auto_install_java_impl(
 
 /// 检查指定路径的 JRE
 pub async fn check_jre(java_path: String) -> Option<JavaRuntimeVersion> {
-    match check_jre_impl(&java_path).await {
-        Ok(version) => Some(version),
-        Err(_) => None,
-    }
+    check_jre_impl(&java_path).await.ok()
 }
 
 pub(crate) async fn check_jre_impl(java_path: &str) -> Result<JavaRuntimeVersion> {

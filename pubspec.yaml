@@ -53,7 +53,6 @@ dependencies:
   package_info_plus: ^9.0.1
   tray_manager: ^0.5.3
   windows_single_instance: ^1.1.0
-  vm_service: ^15.2.0
 
 dev_dependencies:
   flutter_test:

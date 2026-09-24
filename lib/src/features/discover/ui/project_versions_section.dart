@@ -2,6 +2,7 @@ import 'package:aml/src/features/discover/data/discover_ids.dart';
 import 'package:aml/src/features/discover/data/modrinth_api.dart';
 import 'package:aml/src/features/discover/ui/browse_filters.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/widgets/components/common/pagination_widget.dart';
 import 'package:aml/src/shared/widgets/components/inputs/filter_multi_select.dart';
 import 'package:flutter/material.dart';
@@ -554,7 +555,7 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
             SizedBox(
               width: 80,
               child: Text(
-                ModrinthApiService.formatDownloadCount(v.downloads),
+                formatDownloadCount(v.downloads),
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontSize: 15,

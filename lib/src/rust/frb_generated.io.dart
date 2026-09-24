@@ -6,8 +6,10 @@
 import 'api/java_download.dart';
 import 'api/jre_scan.dart';
 import 'api/launcher.dart';
+import 'api/mcim_fallback_api.dart';
 import 'api/project_i18n.dart';
 import 'api/simple.dart';
+import 'api/storage_scan.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
@@ -54,6 +56,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Object dco_decode_DartOpaque(dynamic raw);
 
   @protected
+  Map<String, String> dco_decode_Map_String_String_None(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
@@ -67,6 +72,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  AccountDto dco_decode_box_autoadd_account_dto(dynamic raw);
 
   @protected
   bool dco_decode_box_autoadd_bool(dynamic raw);
@@ -100,6 +108,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CapeDto dco_decode_cape_dto(dynamic raw);
 
   @protected
+  DeviceCodeLoginBeginDto dco_decode_device_code_login_begin_dto(dynamic raw);
+
+  @protected
+  DeviceCodePollResultDto dco_decode_device_code_poll_result_dto(dynamic raw);
+
+  @protected
   double dco_decode_f_64(dynamic raw);
 
   @protected
@@ -113,6 +127,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   InstanceDto dco_decode_instance_dto(dynamic raw);
+
+  @protected
+  InstanceMeasureResult dco_decode_instance_measure_result(dynamic raw);
+
+  @protected
+  InstancePartStat dco_decode_instance_part_stat(dynamic raw);
 
   @protected
   PlatformInt64 dco_decode_isize(dynamic raw);
@@ -143,6 +163,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<InstanceDto> dco_decode_list_instance_dto(dynamic raw);
 
   @protected
+  List<InstanceMeasureResult> dco_decode_list_instance_measure_result(
+      dynamic raw);
+
+  @protected
+  List<InstancePartStat> dco_decode_list_instance_part_stat(dynamic raw);
+
+  @protected
   List<JavaRuntimeVersion> dco_decode_list_java_runtime_version(dynamic raw);
 
   @protected
@@ -150,6 +177,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<LoaderVersionDto> dco_decode_list_loader_version_dto(dynamic raw);
+
+  @protected
+  List<LocalizeProjectInputDto> dco_decode_list_localize_project_input_dto(
+      dynamic raw);
+
+  @protected
+  List<LocalizedProjectDto> dco_decode_list_localized_project_dto(dynamic raw);
 
   @protected
   List<ModFileDto> dco_decode_list_mod_file_dto(dynamic raw);
@@ -163,6 +197,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<PackContentFileDto> dco_decode_list_pack_content_file_dto(dynamic raw);
+
+  @protected
+  List<PathMeasureRequest> dco_decode_list_path_measure_request(dynamic raw);
+
+  @protected
+  List<PathMeasureResult> dco_decode_list_path_measure_result(dynamic raw);
 
   @protected
   List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
@@ -182,6 +222,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   List<ProjectI18nUpsertDto> dco_decode_list_project_i_18_n_upsert_dto(
       dynamic raw);
+
+  @protected
+  List<(String, String)> dco_decode_list_record_string_string(dynamic raw);
 
   @protected
   List<SkinDto> dco_decode_list_skin_dto(dynamic raw);
@@ -205,6 +248,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LoaderVersionDto dco_decode_loader_version_dto(dynamic raw);
 
   @protected
+  LocalizeProjectInputDto dco_decode_localize_project_input_dto(dynamic raw);
+
+  @protected
+  LocalizedProjectDto dco_decode_localized_project_dto(dynamic raw);
+
+  @protected
+  McimHttpResponse dco_decode_mcim_http_response(dynamic raw);
+
+  @protected
   ModFileDto dco_decode_mod_file_dto(dynamic raw);
 
   @protected
@@ -214,7 +266,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ModelFaceDto dco_decode_model_face_dto(dynamic raw);
 
   @protected
+  Map<String, String>? dco_decode_opt_Map_String_String_None(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  AccountDto? dco_decode_opt_box_autoadd_account_dto(dynamic raw);
 
   @protected
   bool? dco_decode_opt_box_autoadd_bool(dynamic raw);
@@ -260,6 +318,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   PackImportPreviewDto dco_decode_pack_import_preview_dto(dynamic raw);
 
   @protected
+  PathMeasureRequest dco_decode_path_measure_request(dynamic raw);
+
+  @protected
+  PathMeasureResult dco_decode_path_measure_result(dynamic raw);
+
+  @protected
   ProcessDto dco_decode_process_dto(dynamic raw);
 
   @protected
@@ -273,6 +337,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ProjectI18nUpsertDto dco_decode_project_i_18_n_upsert_dto(dynamic raw);
+
+  @protected
+  (String, String) dco_decode_record_string_string(dynamic raw);
 
   @protected
   ResolvedAssetPreviewDto dco_decode_resolved_asset_preview_dto(dynamic raw);
@@ -332,6 +399,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Object sse_decode_DartOpaque(SseDeserializer deserializer);
 
   @protected
+  Map<String, String> sse_decode_Map_String_String_None(
+      SseDeserializer deserializer);
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
@@ -347,6 +418,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  AccountDto sse_decode_box_autoadd_account_dto(SseDeserializer deserializer);
 
   @protected
   bool sse_decode_box_autoadd_bool(SseDeserializer deserializer);
@@ -384,6 +458,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   CapeDto sse_decode_cape_dto(SseDeserializer deserializer);
 
   @protected
+  DeviceCodeLoginBeginDto sse_decode_device_code_login_begin_dto(
+      SseDeserializer deserializer);
+
+  @protected
+  DeviceCodePollResultDto sse_decode_device_code_poll_result_dto(
+      SseDeserializer deserializer);
+
+  @protected
   double sse_decode_f_64(SseDeserializer deserializer);
 
   @protected
@@ -397,6 +479,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   InstanceDto sse_decode_instance_dto(SseDeserializer deserializer);
+
+  @protected
+  InstanceMeasureResult sse_decode_instance_measure_result(
+      SseDeserializer deserializer);
+
+  @protected
+  InstancePartStat sse_decode_instance_part_stat(SseDeserializer deserializer);
 
   @protected
   PlatformInt64 sse_decode_isize(SseDeserializer deserializer);
@@ -430,6 +519,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<InstanceDto> sse_decode_list_instance_dto(SseDeserializer deserializer);
 
   @protected
+  List<InstanceMeasureResult> sse_decode_list_instance_measure_result(
+      SseDeserializer deserializer);
+
+  @protected
+  List<InstancePartStat> sse_decode_list_instance_part_stat(
+      SseDeserializer deserializer);
+
+  @protected
   List<JavaRuntimeVersion> sse_decode_list_java_runtime_version(
       SseDeserializer deserializer);
 
@@ -439,6 +536,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<LoaderVersionDto> sse_decode_list_loader_version_dto(
+      SseDeserializer deserializer);
+
+  @protected
+  List<LocalizeProjectInputDto> sse_decode_list_localize_project_input_dto(
+      SseDeserializer deserializer);
+
+  @protected
+  List<LocalizedProjectDto> sse_decode_list_localized_project_dto(
       SseDeserializer deserializer);
 
   @protected
@@ -454,6 +559,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<PackContentFileDto> sse_decode_list_pack_content_file_dto(
+      SseDeserializer deserializer);
+
+  @protected
+  List<PathMeasureRequest> sse_decode_list_path_measure_request(
+      SseDeserializer deserializer);
+
+  @protected
+  List<PathMeasureResult> sse_decode_list_path_measure_result(
       SseDeserializer deserializer);
 
   @protected
@@ -475,6 +588,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<ProjectI18nUpsertDto> sse_decode_list_project_i_18_n_upsert_dto(
+      SseDeserializer deserializer);
+
+  @protected
+  List<(String, String)> sse_decode_list_record_string_string(
       SseDeserializer deserializer);
 
   @protected
@@ -502,6 +619,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LoaderVersionDto sse_decode_loader_version_dto(SseDeserializer deserializer);
 
   @protected
+  LocalizeProjectInputDto sse_decode_localize_project_input_dto(
+      SseDeserializer deserializer);
+
+  @protected
+  LocalizedProjectDto sse_decode_localized_project_dto(
+      SseDeserializer deserializer);
+
+  @protected
+  McimHttpResponse sse_decode_mcim_http_response(SseDeserializer deserializer);
+
+  @protected
   ModFileDto sse_decode_mod_file_dto(SseDeserializer deserializer);
 
   @protected
@@ -511,7 +639,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ModelFaceDto sse_decode_model_face_dto(SseDeserializer deserializer);
 
   @protected
+  Map<String, String>? sse_decode_opt_Map_String_String_None(
+      SseDeserializer deserializer);
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  AccountDto? sse_decode_opt_box_autoadd_account_dto(
+      SseDeserializer deserializer);
 
   @protected
   bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer);
@@ -564,6 +700,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  PathMeasureRequest sse_decode_path_measure_request(
+      SseDeserializer deserializer);
+
+  @protected
+  PathMeasureResult sse_decode_path_measure_result(
+      SseDeserializer deserializer);
+
+  @protected
   ProcessDto sse_decode_process_dto(SseDeserializer deserializer);
 
   @protected
@@ -578,6 +722,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ProjectI18nUpsertDto sse_decode_project_i_18_n_upsert_dto(
+      SseDeserializer deserializer);
+
+  @protected
+  (String, String) sse_decode_record_string_string(
       SseDeserializer deserializer);
 
   @protected
@@ -667,6 +815,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_DartOpaque(Object self, SseSerializer serializer);
 
   @protected
+  void sse_encode_Map_String_String_None(
+      Map<String, String> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
@@ -682,6 +834,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_account_dto(
+      AccountDto self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bool(bool self, SseSerializer serializer);
@@ -720,6 +876,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_cape_dto(CapeDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_device_code_login_begin_dto(
+      DeviceCodeLoginBeginDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_device_code_poll_result_dto(
+      DeviceCodePollResultDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
 
   @protected
@@ -734,6 +898,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_instance_dto(InstanceDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_instance_measure_result(
+      InstanceMeasureResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_instance_part_stat(
+      InstancePartStat self, SseSerializer serializer);
 
   @protected
   void sse_encode_isize(PlatformInt64 self, SseSerializer serializer);
@@ -769,6 +941,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       List<InstanceDto> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_instance_measure_result(
+      List<InstanceMeasureResult> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_instance_part_stat(
+      List<InstancePartStat> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_java_runtime_version(
       List<JavaRuntimeVersion> self, SseSerializer serializer);
 
@@ -779,6 +959,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_loader_version_dto(
       List<LoaderVersionDto> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_localize_project_input_dto(
+      List<LocalizeProjectInputDto> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_localized_project_dto(
+      List<LocalizedProjectDto> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_mod_file_dto(
@@ -795,6 +983,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_pack_content_file_dto(
       List<PackContentFileDto> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_path_measure_request(
+      List<PathMeasureRequest> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_path_measure_result(
+      List<PathMeasureResult> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
@@ -818,6 +1014,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_project_i_18_n_upsert_dto(
       List<ProjectI18nUpsertDto> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_record_string_string(
+      List<(String, String)> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_skin_dto(List<SkinDto> self, SseSerializer serializer);
@@ -846,6 +1046,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       LoaderVersionDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_localize_project_input_dto(
+      LocalizeProjectInputDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_localized_project_dto(
+      LocalizedProjectDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_mcim_http_response(
+      McimHttpResponse self, SseSerializer serializer);
+
+  @protected
   void sse_encode_mod_file_dto(ModFileDto self, SseSerializer serializer);
 
   @protected
@@ -856,7 +1068,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_model_face_dto(ModelFaceDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_Map_String_String_None(
+      Map<String, String>? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_account_dto(
+      AccountDto? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer);
@@ -911,6 +1131,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       PackImportPreviewDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_path_measure_request(
+      PathMeasureRequest self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_path_measure_result(
+      PathMeasureResult self, SseSerializer serializer);
+
+  @protected
   void sse_encode_process_dto(ProcessDto self, SseSerializer serializer);
 
   @protected
@@ -928,6 +1156,10 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_project_i_18_n_upsert_dto(
       ProjectI18nUpsertDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_record_string_string(
+      (String, String) self, SseSerializer serializer);
 
   @protected
   void sse_encode_resolved_asset_preview_dto(

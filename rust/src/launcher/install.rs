@@ -65,11 +65,6 @@ pub async fn install_instance(
     }
 
     let java_arch = std::env::consts::ARCH;
-    let java_arch = match java_arch {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => other,
-    };
 
     report(0.08, "Downloading Minecraft files…".into());
     if force {
@@ -288,11 +283,7 @@ pub async fn launch_instance(
 
     let info = manifest::load_cached_version_info(&resource, &version_jar_id).await?;
     let required_major = super::args::required_java_major(&info);
-    let java_arch = match std::env::consts::ARCH {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => other,
-    };
+    let java_arch = std::env::consts::ARCH;
 
     let configured = instance
         .java_path

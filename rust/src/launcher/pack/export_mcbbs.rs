@@ -44,6 +44,9 @@ struct McbbsAddonOut {
 ///
 /// Content is embedded under `overrides/` (offline-friendly). Remote CurseForge
 /// file entries are omitted unless we later track CF project/file IDs.
+// Internal export entrypoint behind the FFI wrapper; parity with the mrpack
+// exporter keeps call sites uniform.
+#[allow(clippy::too_many_arguments)]
 pub async fn export_instance_mcbbs(
     instance_id: &str,
     export_path: &str,

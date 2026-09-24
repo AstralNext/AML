@@ -13,7 +13,6 @@ import 'package:aml/src/shared/widgets/app_messenger.dart';
 import 'package:aml/src/shared/widgets/components/app_bar/status_bar.dart';
 import 'package:aml/src/shared/widgets/components/navigation/side_navigation.dart';
 import 'package:aml/src/shared/widgets/components/overlays/progress_box.dart';
-import 'package:aml/src/app/state/progress_state.dart';
 import 'package:aml/src/features/discover/ui/author_detail_page.dart';
 import 'package:aml/src/features/discover/ui/project_detail_page.dart';
 import 'package:aml/src/features/instances/ui/instance_detail_page.dart';
@@ -34,7 +33,6 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen>
     with AutomaticKeepAliveClientMixin {
   late final AppStore _appStore = getIt<AppStore>();
-  late final ProgressStore _progressStore = getIt<ProgressStore>();
   late final NavigationState _navigation = getIt<NavigationState>();
 
   /// Built on first visit so Discover/Wardrobe initState do not run at cold start.

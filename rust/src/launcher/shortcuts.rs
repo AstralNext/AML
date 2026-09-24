@@ -232,12 +232,12 @@ fn png_to_bmp_ico(png: &[u8]) -> Result<Vec<u8>> {
     let rgba: Vec<u8> = match reader.output_color_type().0 {
         ColorType::Rgba => raw,
         ColorType::Rgb => raw
-            .chunks_exact(3)
+            .as_chunks::<3>().0.iter()
             .flat_map(|c| [c[0], c[1], c[2], 255])
             .collect(),
         ColorType::Grayscale => raw.iter().flat_map(|&v| [v, v, v, 255]).collect(),
         ColorType::GrayscaleAlpha => raw
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .flat_map(|c| [c[0], c[0], c[0], c[1]])
             .collect(),
         other => bail!("unsupported png color type: {other:?}"),
@@ -278,7 +278,7 @@ fn rgba_to_bmp_ico(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
         bail!("invalid ico size {width}x{height}");
     }
     let xor_size = (width * height * 4) as usize;
-    let and_stride = ((width + 31) / 32) * 4;
+    let and_stride = width.div_ceil(32) * 4;
     let and_size = (and_stride * height) as usize;
     let dib_size = 40 + xor_size + and_size;
 

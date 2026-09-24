@@ -225,13 +225,13 @@ fn summarize_pack_archive(data: &[u8], kind: PackKind) -> Result<Vec<PackContent
     for id in order {
         if let Some(mut cat) = map.remove(id) {
             cat.files
-                .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                .sort_by_key(|a| a.name.to_lowercase());
             out.push(cat);
         }
     }
     for mut cat in map.into_values() {
         cat.files
-            .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            .sort_by_key(|a| a.name.to_lowercase());
         out.push(cat);
     }
     Ok(out)
@@ -332,6 +332,8 @@ pub async fn create_instance_from_pack_file_resumable(
     }
 }
 
+// Shared importer pipeline for CurseForge- and MCBBS-shaped manifests.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn install_from_cf_meta(
     data: &[u8],
     meta: CfPackMeta,
@@ -558,6 +560,8 @@ pub(super) async fn install_from_cf_meta(
     db::get_instance(&state.pool, &created.id).await
 }
 
+// Field-by-field row builder; each argument maps 1:1 to a ContentEntry column.
+#[allow(clippy::too_many_arguments)]
 fn pack_file_content_entry(
     instance_id: String,
     rel: &str,

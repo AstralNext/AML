@@ -64,11 +64,11 @@ pub fn normalize_skin_texture(png_data: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut rgba = match reader.output_color_type().0 {
         ColorType::Grayscale => raw.iter().flat_map(|&v| [v, v, v, 255]).collect::<Vec<_>>(),
         ColorType::GrayscaleAlpha => raw
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .flat_map(|c| [c[0], c[0], c[0], c[1]])
             .collect(),
         ColorType::Rgb => raw
-            .chunks_exact(3)
+            .as_chunks::<3>().0.iter()
             .flat_map(|c| [c[0], c[1], c[2], 255])
             .collect(),
         ColorType::Rgba => {

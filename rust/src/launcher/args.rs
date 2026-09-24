@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use crate::meta::minecraft::{
@@ -65,6 +65,9 @@ pub fn required_java_major(info: &VersionInfo) -> u32 {
         .unwrap_or(8)
 }
 
+// All inputs are independently resolved by the single caller; keeping them
+// explicit avoids an otherwise-redundant launch options struct.
+#[allow(clippy::too_many_arguments)]
 pub fn build_launch_args(
     resource_dir: &str,
     instance_path: &str,
@@ -345,8 +348,8 @@ fn expand_argument(
 
 fn parse_jvm_placeholder(
     s: &str,
-    natives: &PathBuf,
-    libraries: &PathBuf,
+    natives: &Path,
+    libraries: &Path,
     classpath: &str,
     version_name: &str,
 ) -> String {
@@ -362,12 +365,14 @@ fn parse_jvm_placeholder(
         .replace("${classpath}", classpath)
 }
 
+// Pure substitution helper over the already-assembled launch context.
+#[allow(clippy::too_many_arguments)]
 fn parse_game_placeholder(
     s: &str,
     auth: &LaunchAuth,
-    game_dir: &PathBuf,
-    assets_root: &PathBuf,
-    game_assets: &PathBuf,
+    game_dir: &Path,
+    assets_root: &Path,
+    game_assets: &Path,
     info: &VersionInfo,
     version_name: &str,
     resolution: (u32, u32),

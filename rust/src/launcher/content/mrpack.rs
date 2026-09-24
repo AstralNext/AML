@@ -44,8 +44,6 @@ struct MrpackFile {
 #[derive(Deserialize)]
 struct MrpackHashes {
     sha1: Option<String>,
-    #[serde(default)]
-    sha512: Option<String>,
 }
 
 #[derive(Deserialize)]

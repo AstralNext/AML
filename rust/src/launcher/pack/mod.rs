@@ -15,7 +15,7 @@ mod import_mmc;
 mod import_mrpack;
 mod mmc;
 
-pub use detect::{detect_pack_bytes, detect_pack_file, PackKind};
+pub use detect::detect_pack_file;
 pub use export_common::{
     enrich_categories_with_content, summarize_export_content, ExportIncludes, PackContentCategory,
     PackContentFile,
@@ -23,11 +23,9 @@ pub use export_common::{
 pub use export_mcbbs::export_instance_mcbbs;
 pub use export_mmc::export_instance_multimc;
 pub use export_mrpack::export_instance_mrpack;
-pub use icon::{
-    find_pack_icon_bytes, try_extract_pack_icon_from_archive, try_extract_pack_icon_to,
-};
+pub use icon::try_extract_pack_icon_from_archive;
 pub use import_common::{
-    create_instance_from_pack_file_resumable, preview_pack_file, PackImportPreview,
+    create_instance_from_pack_file_resumable, preview_pack_file,
 };
 pub use import_mmc::create_instance_from_mmc_folder;
 
@@ -62,6 +60,8 @@ pub async fn preview_instance_export(instance_id: &str) -> Result<Vec<PackConten
 }
 
 /// Unified pack export. `format` is one of: `mrpack`, `multimc`, `mcbbs`.
+// Internal export dispatcher behind the FFI wrapper.
+#[allow(clippy::too_many_arguments)]
 pub async fn export_instance_pack(
     instance_id: &str,
     export_path: &str,

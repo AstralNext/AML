@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `auto_install_java_impl`, `build_java_executable_path`, `check_jre_impl`, `configure_java_installation`, `download_and_extract_java`, `download_file_once`, `download_file`, `ensure_java_home_executables`, `extract_zip`, `fetch_java_packages`, `get_default_java_dir`, `get_max_memory_impl`, `get_system_arch`, `get_system_os`, `java_cache_key`, `java_file_signature`, `prepare_java_installation`
+// These functions are ignored because they are not marked as `pub`: `apply_extracted_unix_mode`, `auto_install_java_impl`, `build_java_executable_path`, `check_jre_impl`, `configure_java_installation`, `download_and_extract_java`, `download_file_once`, `download_file`, `ensure_java_home_executables`, `extract_zip`, `fetch_java_packages`, `get_default_java_dir`, `get_max_memory_impl`, `get_system_arch`, `get_system_os`, `java_cache_key`, `java_file_signature`, `path_needs_execute_bit`, `prepare_java_installation`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `AzulPackageResponse`, `CachedJavaRuntime`, `JavaPackage`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `fmt`, `fmt`, `fmt`
 

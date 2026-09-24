@@ -382,39 +382,4 @@ class ModrinthApiService {
       return null;
     }
   }
-
-  static String formatRelativeTime(String iso) {
-    final dt = DateTime.tryParse(iso)?.toLocal();
-    if (dt == null) return iso;
-    final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1) return '刚刚';
-    if (diff.inHours < 1) return '${diff.inMinutes}分钟前';
-    if (diff.inDays < 1) return '${diff.inHours}小时前';
-    if (diff.inDays < 7) return '${diff.inDays}天前';
-    if (diff.inDays < 30) return '${(diff.inDays / 7).floor()}周前';
-    if (diff.inDays < 365) return '${(diff.inDays / 30).floor()}个月前';
-    return '${(diff.inDays / 365).floor()}年前';
-  }
-
-  static String formatDownloadCount(int downloads) {
-    if (downloads >= 100000000) {
-      final v = downloads / 100000000;
-      final s = v >= 10 ? v.toStringAsFixed(1) : v.toStringAsFixed(2);
-      return '${_trimTrailingZeros(s)}亿';
-    }
-    if (downloads >= 10000) {
-      final v = downloads / 10000;
-      final s = v >= 100 ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
-      return '${_trimTrailingZeros(s)}万';
-    }
-    if (downloads >= 1000) {
-      return '${_trimTrailingZeros((downloads / 1000).toStringAsFixed(1))}K';
-    }
-    return downloads.toString();
-  }
-
-  static String _trimTrailingZeros(String s) {
-    if (!s.contains('.')) return s;
-    return s.replaceFirst(RegExp(r'\.?0+$'), '');
-  }
 }

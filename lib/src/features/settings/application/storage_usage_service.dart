@@ -4,6 +4,8 @@ import 'package:aml/src/app/di/service_locator.dart';
 import 'package:aml/src/app/state/runtime_state.dart';
 import 'package:aml/src/features/discover/data/translation_cache_hub.dart';
 import 'package:aml/src/features/settings/application/resource_settings_state.dart';
+import 'package:aml/src/rust/api/storage_scan.dart' as rust;
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
@@ -196,16 +198,6 @@ class StorageUsageService {
 		return cleared;
 	}
 
-	static String formatBytes(int bytes) {
-		if (bytes < 1024) return '$bytes B';
-		final kb = bytes / 1024;
-		if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
-		final mb = kb / 1024;
-		if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
-		final gb = mb / 1024;
-		return '${gb.toStringAsFixed(2)} GB';
-	}
-
 	static String formatScanAge(DateTime scannedAt) {
 		final diff = DateTime.now().difference(scannedAt);
 		if (diff.inSeconds < 60) return '刚刚';
@@ -324,29 +316,31 @@ class StorageUsageService {
 	}
 
 	Future<List<StorageItem>> _itemsFromSpecs(List<_PathSpec> specs) async {
-		final items = await Future.wait(specs.map(_itemFromSpec));
-		return items;
-	}
-
-	Future<StorageItem> _itemFromSpec(_PathSpec spec) async {
-		final measured = await compute(
-			_measurePathDetailed,
-			_MeasureArgs(
-				path: spec.path,
-				isFile: spec.isFile,
-				excludeChildNames: spec.excludeChildNames,
-				onlyFilesAtRoot: spec.onlyFilesAtRoot,
-			),
+		if (specs.isEmpty) return const [];
+		final results = await rust.measurePaths(
+			requests: specs
+				.map(
+					(s) => rust.PathMeasureRequest(
+						path: s.path,
+						isFile: s.isFile,
+						excludeChildNames: s.excludeChildNames,
+						onlyFilesAtRoot: s.onlyFilesAtRoot,
+					),
+				)
+				.toList(),
 		);
-		return StorageItem(
-			id: spec.id,
-			title: spec.title,
-			description: spec.description,
-			path: spec.path,
-			bytes: measured.bytes,
-			fileCount: measured.fileCount,
-			clearable: spec.clearable,
-		);
+		return [
+			for (var i = 0; i < specs.length; i++)
+				StorageItem(
+					id: specs[i].id,
+					title: specs[i].title,
+					description: specs[i].description,
+					path: specs[i].path,
+					bytes: results[i].bytes,
+					fileCount: results[i].fileCount,
+					clearable: specs[i].clearable,
+				),
+		];
 	}
 
 	Future<StorageGroup> _scanInstances(String resourceRoot) async {
@@ -358,48 +352,63 @@ class StorageUsageService {
 				.listSync(followLinks: false)
 				.whereType<Directory>()
 				.toList();
-			final breakdowns = await Future.wait(
-				entries.map((dir) => compute(_measureInstanceBreakdown, dir.path)),
+			final breakdowns = await rust.measureInstances(
+				paths: entries.map((dir) => dir.path).toList(),
 			);
 			for (var i = 0; i < entries.length; i++) {
 				final instanceDir = entries[i];
 				final name = p.basename(instanceDir.path);
 				final breakdown = breakdowns[i];
+				final parts = breakdown.parts
+					.where((part) => part.bytes > 0)
+					.toList()
+					..sort((a, b) => b.bytes.compareTo(a.bytes));
+				final summary = parts.isEmpty
+					? '空实例'
+					: parts
+						.take(3)
+						.map(
+							(part) =>
+								'${_instancePartMeta[part.id]?.$1 ?? part.id} '
+								'${formatBytes(part.bytes)}',
+						)
+						.join(' · ');
 				items.add(
 					StorageItem(
 						id: 'instance:$name',
 						title: name,
-						description: breakdown.summary,
+						description: summary,
 						path: instanceDir.path,
 						bytes: breakdown.totalBytes,
 						fileCount: breakdown.totalFiles,
-						children: breakdown.parts
-							.map(
-								(part) => StorageItem(
+						children: [
+							for (final part in parts)
+								StorageItem(
 									id: 'instance:$name:${part.id}',
-									title: part.title,
-									description: part.description,
-									path: part.path,
+									title: _instancePartMeta[part.id]?.$1 ?? part.id,
+									description: _instancePartMeta[part.id]?.$2 ?? '',
+									path: part.id == 'other'
+										? instanceDir.path
+										: p.join(instanceDir.path, part.id),
 									bytes: part.bytes,
 									fileCount: part.fileCount,
 								),
-							)
-							.toList(),
+						],
 					),
 				);
 			}
 		}
 
 		if (items.isEmpty) {
-			items.add(
-				await _itemFromSpec(
+			items.addAll(
+				await _itemsFromSpecs([
 					_PathSpec(
 						id: 'instances_empty',
 						title: '暂无实例',
 						description: '创建实例后会显示详细占用',
 						path: root.path,
 					),
-				),
+				]),
 			);
 		}
 
@@ -715,171 +724,15 @@ class StorageUsageService {
 	}
 }
 
-class _MeasureArgs {
-	final String path;
-	final bool isFile;
-	final List<String> excludeChildNames;
-	final bool onlyFilesAtRoot;
+/// Rust 分桶 id → 展示（标题, 描述）。与 rust/src/api/storage_scan.rs 对齐。
+const _instancePartMeta = <String, (String, String)>{
+	'mods': ('模组', 'mods/'),
+	'resourcepacks': ('资源包', 'resourcepacks/'),
+	'shaderpacks': ('光影包', 'shaderpacks/'),
+	'datapacks': ('数据包', 'datapacks/'),
+	'saves': ('存档', 'saves/'),
+	'backups': ('备份', 'backups/'),
+	'logs': ('日志', 'logs/'),
+	'other': ('其他', '配置、截图等其余文件'),
+};
 
-	const _MeasureArgs({
-		required this.path,
-		this.isFile = false,
-		this.excludeChildNames = const [],
-		this.onlyFilesAtRoot = false,
-	});
-}
-
-class _MeasureResult {
-	final int bytes;
-	final int fileCount;
-
-	const _MeasureResult(this.bytes, this.fileCount);
-}
-
-class _InstancePart {
-	final String id;
-	final String title;
-	final String description;
-	final String path;
-	final int bytes;
-	final int fileCount;
-
-	const _InstancePart({
-		required this.id,
-		required this.title,
-		required this.description,
-		required this.path,
-		required this.bytes,
-		required this.fileCount,
-	});
-}
-
-class _InstanceBreakdown {
-	final int totalBytes;
-	final int totalFiles;
-	final String summary;
-	final List<_InstancePart> parts;
-
-	const _InstanceBreakdown({
-		required this.totalBytes,
-		required this.totalFiles,
-		required this.summary,
-		required this.parts,
-	});
-}
-
-_MeasureResult _measurePathDetailed(_MeasureArgs args) {
-	try {
-		if (args.isFile) {
-			final file = File(args.path);
-			if (!file.existsSync()) return const _MeasureResult(0, 0);
-			return _MeasureResult(file.lengthSync(), 1);
-		}
-
-		final dir = Directory(args.path);
-		if (!dir.existsSync()) return const _MeasureResult(0, 0);
-
-		if (args.onlyFilesAtRoot) {
-			var bytes = 0;
-			var files = 0;
-			for (final entity in dir.listSync(followLinks: false)) {
-				if (entity is File) {
-					try {
-						bytes += entity.lengthSync();
-						files++;
-					} catch (_) {}
-				}
-			}
-			return _MeasureResult(bytes, files);
-		}
-
-		final excluded = args.excludeChildNames.map((e) => e.toLowerCase()).toSet();
-		var bytes = 0;
-		var files = 0;
-
-		for (final entity in dir.listSync(followLinks: false)) {
-			final name = p.basename(entity.path).toLowerCase();
-			if (excluded.contains(name)) continue;
-			if (entity is File) {
-				try {
-					bytes += entity.lengthSync();
-					files++;
-				} catch (_) {}
-			} else if (entity is Directory) {
-				final nested = _measurePathDetailed(
-					_MeasureArgs(path: entity.path),
-				);
-				bytes += nested.bytes;
-				files += nested.fileCount;
-			}
-		}
-		return _MeasureResult(bytes, files);
-	} catch (_) {
-		return const _MeasureResult(0, 0);
-	}
-}
-
-_InstanceBreakdown _measureInstanceBreakdown(String instancePath) {
-	const partsMeta = <(String, String, String)>[
-		('mods', '模组', 'mods/'),
-		('resourcepacks', '资源包', 'resourcepacks/'),
-		('shaderpacks', '光影包', 'shaderpacks/'),
-		('datapacks', '数据包', 'datapacks/'),
-		('saves', '存档', 'saves/'),
-		('backups', '备份', 'backups/'),
-		('logs', '日志', 'logs/'),
-	];
-
-	final parts = <_InstancePart>[];
-	var accountedBytes = 0;
-	var accountedFiles = 0;
-
-	for (final (id, title, folder) in partsMeta) {
-		final path = p.join(instancePath, folder.replaceAll('/', ''));
-		final measured = _measurePathDetailed(_MeasureArgs(path: path));
-		parts.add(
-			_InstancePart(
-				id: id,
-				title: title,
-				description: folder,
-				path: path,
-				bytes: measured.bytes,
-				fileCount: measured.fileCount,
-			),
-		);
-		accountedBytes += measured.bytes;
-		accountedFiles += measured.fileCount;
-	}
-
-	final total = _measurePathDetailed(_MeasureArgs(path: instancePath));
-	final otherBytes = (total.bytes - accountedBytes).clamp(0, total.bytes);
-	final otherFiles = (total.fileCount - accountedFiles).clamp(0, total.fileCount);
-	if (otherBytes > 0) {
-		parts.add(
-			_InstancePart(
-				id: 'other',
-				title: '其他',
-				description: '配置、截图等其余文件',
-				path: instancePath,
-				bytes: otherBytes,
-				fileCount: otherFiles,
-			),
-		);
-	}
-
-	final nonZero = parts.where((e) => e.bytes > 0).toList()
-		..sort((a, b) => b.bytes.compareTo(a.bytes));
-	final summary = nonZero.isEmpty
-		? '空实例'
-		: nonZero
-			.take(3)
-			.map((e) => '${e.title} ${StorageUsageService.formatBytes(e.bytes)}')
-			.join(' · ');
-
-	return _InstanceBreakdown(
-		totalBytes: total.bytes,
-		totalFiles: total.fileCount,
-		summary: summary,
-		parts: nonZero,
-	);
-}

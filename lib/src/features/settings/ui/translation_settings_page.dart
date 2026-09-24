@@ -8,6 +8,7 @@ import 'package:aml/src/features/settings/ui/settings_screen.dart';
 import 'package:aml/src/features/settings/ui/settings_switch_row.dart';
 import 'package:aml/src/rust/api/project_i18n.dart' as i18n;
 import 'package:aml/src/shared/theme/app_theme_tokens.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
 import 'package:aml/src/shared/widgets/app_messenger.dart';
 import 'package:aml/src/shared/widgets/components/navigation/nav_rect_button.dart';
@@ -259,7 +260,7 @@ class _TranslationSettingsPageState extends State<TranslationSettingsPage> {
                       tokens,
                       '磁盘正文缓存',
                       '${db?.textEntries.toInt() ?? 0} 条 · '
-                          '${StorageUsageService.formatBytes(db?.textBytes.toInt() ?? 0)}',
+                          '${formatBytes(db?.textBytes.toInt() ?? 0)}',
                     ),
                     _statRow(
                       tokens,

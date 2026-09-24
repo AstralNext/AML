@@ -17,7 +17,6 @@ class ServerPingState {
 
 void serverPingLog(String msg) {
   assert(() {
-    // ignore: avoid_print
     debugPrint(msg);
     return true;
   }());

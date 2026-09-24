@@ -103,9 +103,7 @@ pub async fn list_available_skins() -> Result<Vec<SkinInfo>> {
         if !is_msa {
             return None;
         }
-        let Some(token) = token.as_deref() else {
-            return None;
-        };
+        let token = token.as_deref()?;
         let _ = auth::refresh_active_msa_if_needed().await;
         mojang::fetch_profile(token).await.ok()
     };

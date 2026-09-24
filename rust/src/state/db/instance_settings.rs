@@ -36,7 +36,7 @@ pub async fn update_instance(
     )
     .bind(&current.name)
     .bind(&current.java_path)
-    .bind(&current.memory_mb)
+    .bind(current.memory_mb)
     .bind(&current.extra_jvm_args)
     .bind(&current.loader_version)
     .bind(id)

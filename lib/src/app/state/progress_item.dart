@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
 class ProgressItem {
@@ -143,14 +144,4 @@ int? _asInt(Object? value) {
   if (value is double) return value.round();
   if (value is num) return value.toInt();
   return int.tryParse('$value');
-}
-
-String formatBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  final kb = bytes / 1024;
-  if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
-  final mb = kb / 1024;
-  if (mb < 1024) return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
-  final gb = mb / 1024;
-  return '${gb.toStringAsFixed(2)} GB';
 }

@@ -55,9 +55,7 @@ pub fn normalize_favicon(raw: &str) -> Option<String> {
     }
 
     let (prefix, payload) = if let Some(rest) = trimmed.strip_prefix("data:") {
-        let Some(comma) = rest.find(',') else {
-            return None;
-        };
+        let comma = rest.find(',')?;
         let meta = &rest[..comma];
         // data:image/png;base64,XXXX  (or ;base64 missing — still treat as base64)
         let header = if meta.to_ascii_lowercase().contains("base64") {
@@ -285,8 +283,7 @@ fn parse_status_payload(json_response: &[u8]) -> Result<ServerStatus> {
                 description: value
                     .get("description")
                     .and_then(|d| RawValue::from_string(d.to_string()).ok()),
-                players: value.get("players").and_then(|p| {
-                    Some(ServerPlayers {
+                players: value.get("players").map(|p| ServerPlayers {
                         max: p.get("max").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
                         online: p.get("online").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
                         sample: p
@@ -310,8 +307,7 @@ fn parse_status_payload(json_response: &[u8]) -> Result<ServerStatus> {
                                     .collect()
                             })
                             .unwrap_or_default(),
-                    })
-                }),
+                    }),
                 version: value.get("version").map(|v| ServerVersion {
                     name: v
                         .get("name")
@@ -548,7 +544,7 @@ mod legacy {
 
         let data = String::from_utf16_lossy(
             &data
-                .chunks_exact(2)
+                .as_chunks::<2>().0.iter()
                 .map(|a| u16::from_be_bytes([a[0], a[1]]))
                 .collect::<Vec<u16>>(),
         );

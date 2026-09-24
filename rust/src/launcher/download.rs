@@ -452,15 +452,14 @@ async fn download_client(
     let dest = dirs::versions(resource_dir)
         .join(version_jar_id)
         .join(format!("{version_jar_id}.jar"));
-    if dest.exists() {
-        if sha1_file(&dest)
+    if dest.exists()
+        && sha1_file(&dest)
             .await
             .ok()
             .is_some_and(|actual| actual.eq_ignore_ascii_case(&download.sha1))
         {
             return Ok(());
         }
-    }
     let on_bytes = on_progress.clone().map(|cb| {
         progress::file_bytes_cb(
             cb,

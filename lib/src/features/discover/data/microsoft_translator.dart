@@ -1,7 +1,14 @@
 import 'dart:convert';
 
 import 'package:aml/src/features/discover/data/cache_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
+/// Translation provider ids used in persistent cache / MCDB metadata.
+abstract final class TranslationProviders {
+  static const mcdb = 'mcdb';
+  static const microsoft = 'microsoft';
+}
 
 /// Microsoft Edge Translator (public endpoint, no auth required).
 ///
@@ -79,80 +86,6 @@ class MicrosoftTranslator {
     }
   }
 
-  /// Translate many strings (order preserved). Failed items keep the original.
-  static Future<List<String>> translateMany(
-    List<String> texts, {
-    bool html = false,
-  }) async {
-    if (texts.isEmpty) return const [];
-
-    final out = List<String>.from(texts);
-    final pendingIndexes = <int>[];
-    final pendingTexts = <String>[];
-
-    for (var i = 0; i < texts.length; i++) {
-      final t = texts[i].trim();
-      if (t.isEmpty || isMostlyChinese(t)) {
-        out[i] = t;
-        continue;
-      }
-      final cacheKey = 'ms_tr_${html ? 'h' : 'p'}_${t.hashCode}';
-      final cached = cache.get(cacheKey, _cacheTtl);
-      if (cached is String && cached.isNotEmpty) {
-        out[i] = cached;
-        continue;
-      }
-      pendingIndexes.add(i);
-      pendingTexts.add(t);
-    }
-    if (pendingTexts.isEmpty) return out;
-
-    const chunkSize = 10;
-    for (var start = 0; start < pendingTexts.length; start += chunkSize) {
-      final end = (start + chunkSize).clamp(0, pendingTexts.length);
-      final chunk = pendingTexts.sublist(start, end);
-      // Long items are handled one-by-one. Never throw — keep originals.
-      for (var j = 0; j < chunk.length; j++) {
-        final src = chunk[j];
-        final idx = pendingIndexes[start + j];
-        try {
-          final limit = html ? 2500 : _maxCharsPerRequest;
-          final zh = src.length <= limit
-              ? (await _translateChunk([src], html: html)).first
-              : await _translateLong(src, html: html, maxChars: limit);
-          final trimmed = zh.trim();
-          if (trimmed.isEmpty) continue;
-          out[idx] = trimmed;
-          cache.put('ms_tr_${html ? 'h' : 'p'}_${src.hashCode}', trimmed);
-        } catch (_) {
-          // Keep original text; never fail the discover load path.
-        }
-      }
-    }
-    return out;
-  }
-
-  /// Map id → source text to id → Chinese (best-effort).
-  static Future<Map<String, String>> translateMap(
-    Map<String, String> idToText, {
-    bool html = false,
-  }) async {
-    if (idToText.isEmpty) return const {};
-    try {
-      final ids = idToText.keys.toList();
-      final sources = ids.map((id) => idToText[id] ?? '').toList();
-      final translated = await translateMany(sources, html: html);
-      final out = <String, String>{};
-      for (var i = 0; i < ids.length; i++) {
-        final zh = translated[i].trim();
-        if (zh.isNotEmpty) out[ids[i]] = zh;
-      }
-      return out;
-    } catch (_) {
-      return Map<String, String>.from(idToText);
-    }
-  }
-
   static Future<String> _translateLong(
     String text, {
     required bool html,
@@ -180,10 +113,17 @@ class MicrosoftTranslator {
     return buf.toString();
   }
 
-  /// Protected segment markers inserted by MarkupSafeTranslator.
-  /// A split must never fall inside `&#xE000;AML$idx&#xE001;` or the
-  /// `<pre>`/`<code>`/terminal payload it stands for gets leaked to the
-  /// translator and corrupted.
+  // —— 受保护片段（代码块/终端载荷）占位 token 的唯一出处 ——
+  // MarkupSafeTranslator 也从这里取用，不要再复制字面量。
+  static const protectOpenEntity = '&#xE000;';
+  static const protectCloseEntity = '&#xE001;';
+
+  /// 生成第 [idx] 个受保护片段的占位 token：`&#xE000;AML$idx&#xE001;`。
+  /// A split must never fall inside a token or the `<pre>`/`<code>`/terminal
+  /// payload it stands for gets leaked to the translator and corrupted.
+  static String protectToken(int idx) =>
+      '${protectOpenEntity}AML$idx$protectCloseEntity';
+
   static final _protectOpen = RegExp(r'&(?:amp;)?#x[Ee]000;');
   static final _protectClose = RegExp(r'&(?:amp;)?#x[Ee]001;');
 
@@ -310,9 +250,10 @@ class MicrosoftTranslator {
           .timeout(const Duration(seconds: 30));
     }
     if (response.statusCode != 200) {
-      print(
+      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+      debugPrint(
         '[ms-translate] HTTP ${response.statusCode} '
-        'body=${utf8.decode(response.bodyBytes).substring(0, 200)}',
+        'body=${body.length > 200 ? body.substring(0, 200) : body}',
       );
       throw Exception(
         'Microsoft translate failed: ${response.statusCode}',
@@ -320,10 +261,7 @@ class MicrosoftTranslator {
     }
 
     final list = jsonDecode(utf8.decode(response.bodyBytes)) as List<dynamic>;
-    print(
-      '[ms-translate] HTTP 200 items=${list.length} '
-      'first=${list.isNotEmpty ? (list.first['translations']?.first?['text']?.toString().substring(0, 40) ?? '') : ''}',
-    );
+    debugPrint('[ms-translate] HTTP 200 items=${list.length}');
     final out = <String>[];
     for (var i = 0; i < texts.length; i++) {
       if (i >= list.length) {

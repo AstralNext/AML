@@ -188,12 +188,12 @@ fn summarize_files(root: &Path, files: &[PathBuf]) -> Result<Vec<PackContentCate
     let mut out = Vec::new();
     for id in order {
         if let Some(mut cat) = map.remove(id) {
-            cat.files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            cat.files.sort_by_key(|a| a.name.to_lowercase());
             out.push(cat);
         }
     }
     for mut cat in map.into_values() {
-        cat.files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        cat.files.sort_by_key(|a| a.name.to_lowercase());
         out.push(cat);
     }
     Ok(out)

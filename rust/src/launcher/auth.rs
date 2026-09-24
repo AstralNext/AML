@@ -570,7 +570,7 @@ async fn minecraft_login(client: &reqwest::Client, uhs: &str, xsts: &str) -> Res
 }
 
 async fn minecraft_profile(client: &reqwest::Client, access_token: &str) -> Result<McProfile> {
-    Ok(client
+    client
         .get("https://api.minecraftservices.com/minecraft/profile")
         .bearer_auth(access_token)
         .send()
@@ -578,7 +578,7 @@ async fn minecraft_profile(client: &reqwest::Client, access_token: &str) -> Resu
         .error_for_status()?
         .json()
         .await
-        .context("fetch minecraft profile")?)
+        .context("fetch minecraft profile")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -650,7 +650,9 @@ pub enum DeviceCodePollResult {
     Expired,
     Declined,
     SlowDown,
-    Success { account: crate::state::models::Account },
+    Success {
+        account: Box<crate::state::models::Account>,
+    },
 }
 
 /// Poll Microsoft's token endpoint for the result of a device-code login.
@@ -690,11 +692,9 @@ pub async fn poll_device_code(
         #[derive(Deserialize)]
         struct ErrorBody {
             error: Option<String>,
-            suggestion: Option<String>,
         }
         let body: ErrorBody = serde_json::from_str(&text).unwrap_or(ErrorBody {
             error: None,
-            suggestion: None,
         });
         match body.error.as_deref() {
             Some("authorization_pending") => return Ok(DeviceCodePollResult::Pending),
@@ -745,7 +745,9 @@ pub async fn poll_device_code(
     )
     .await?;
 
-    Ok(DeviceCodePollResult::Success { account })
+    Ok(DeviceCodePollResult::Success {
+        account: Box::new(account),
+    })
 }
 
 #[cfg(test)]
