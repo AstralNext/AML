@@ -25,6 +25,8 @@ class InstanceSettingsController extends ChangeNotifier {
   final heightController = TextEditingController(text: '480');
   final jvmArgsController = TextEditingController();
   final envVarsController = TextEditingController();
+  final jvmArgsFocusNode = FocusNode();
+  final envVarsFocusNode = FocusNode();
   final preLaunchController = TextEditingController();
   final wrapperController = TextEditingController();
   final postExitController = TextEditingController();
@@ -57,6 +59,9 @@ class InstanceSettingsController extends ChangeNotifier {
   String _lastCommittedName = '';
   bool _disposed = false;
 
+  /// 串行化所有保存请求，避免 `saving` 期间静默丢弃最后一次编辑。
+  Future<void> _saveChain = Future<void>.value();
+
   rust.InstanceDto? get instance {
     for (final item in _store.instances.value) {
       if (item.id == instanceId) return item;
@@ -74,6 +79,8 @@ class InstanceSettingsController extends ChangeNotifier {
     heightController.dispose();
     jvmArgsController.dispose();
     envVarsController.dispose();
+    jvmArgsFocusNode.dispose();
+    envVarsFocusNode.dispose();
     preLaunchController.dispose();
     wrapperController.dispose();
     postExitController.dispose();
@@ -127,15 +134,19 @@ class InstanceSettingsController extends ChangeNotifier {
     heightController.text =
         '${instance.windowHeight?.toInt() ?? defaultWindowHeight}';
     fullscreen = instance.fullscreen ?? defaultFullscreen;
-    overrideJvmArgs = instance.extraJvmArgs != null &&
-        instance.extraJvmArgs!.trim().isNotEmpty;
-    jvmArgsController.text =
-        overrideJvmArgs ? (instance.extraJvmArgs ?? '') : defaultJvmArgs;
-    overrideEnvVars = instance.environmentVars != null &&
-        instance.environmentVars!.trim().isNotEmpty;
-    envVarsController.text = overrideEnvVars
-        ? envVarsToDisplay(instance.environmentVars)
-        : defaultEnvVars;
+    // 输入框聚焦时（正在编辑）不要用服务端值覆盖文本/开关，否则光标跳变、
+    // 输入到一半的内容被还原，开关也会误弹回。
+    if (!jvmArgsFocusNode.hasFocus) {
+      overrideJvmArgs = instance.extraJvmArgs != null;
+      jvmArgsController.text =
+          overrideJvmArgs ? (instance.extraJvmArgs ?? '') : defaultJvmArgs;
+    }
+    if (!envVarsFocusNode.hasFocus) {
+      overrideEnvVars = instance.environmentVars != null;
+      envVarsController.text = overrideEnvVars
+          ? envVarsToDisplay(instance.environmentVars)
+          : defaultEnvVars;
+    }
     preLaunchController.text = instance.preLaunchCommand ?? '';
     wrapperController.text = instance.wrapperCommand ?? '';
     postExitController.text = instance.postExitCommand ?? '';
@@ -213,6 +224,30 @@ class InstanceSettingsController extends ChangeNotifier {
     _saveDebounce = Timer(const Duration(milliseconds: 450), () {
       unawaited(action());
     });
+  }
+
+  /// JVM 参数输入防抖保存：清空时回退为清除覆盖（沿用全局默认值）。
+  void scheduleJvmArgsSave(String value) {
+    final trimmed = value.trim();
+    scheduleSave(
+      () => save(
+        extraJvmArgs: trimmed.isEmpty ? null : value,
+        clearExtraJvmArgs: trimmed.isEmpty,
+      ),
+    );
+  }
+
+  /// 环境变量输入防抖保存。尚未形成完整 KEY=VALUE 的中间状态不持久化，
+  /// 以免服务端回显把正在输入的内容抹掉；整框清空则清除覆盖。
+  void scheduleEnvVarsSave(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      scheduleSave(() => save(clearEnvironmentVars: true));
+      return;
+    }
+    final json = envVarsToJson(value);
+    if (json == null) return;
+    scheduleSave(() => save(environmentVars: json));
   }
 
   // ---- 领域更新方法：改字段 + 通知 + 持久化，供各标签页调用 ----
@@ -295,7 +330,8 @@ class InstanceSettingsController extends ChangeNotifier {
     notifyListeners();
     if (!enabled) {
       await save(clearExtraJvmArgs: true);
-    } else {
+    } else if (jvmArgsController.text.trim().isNotEmpty) {
+      // 空白内容不持久化，避免空串覆盖全局默认值并导致开关状态来回弹。
       await save(extraJvmArgs: jvmArgsController.text);
     }
   }
@@ -312,7 +348,10 @@ class InstanceSettingsController extends ChangeNotifier {
     if (!enabled) {
       await save(clearEnvironmentVars: true);
     } else {
-      await save(environmentVars: envVarsToJson(envVarsController.text));
+      final json = envVarsToJson(envVarsController.text);
+      if (json != null) {
+        await save(environmentVars: json);
+      }
     }
   }
 
@@ -355,42 +394,55 @@ class InstanceSettingsController extends ChangeNotifier {
     String? postExitCommand,
     bool clearHooks = false,
     String? updateChannel,
-  }) async {
-    if (saving) return;
-    saving = true;
-    error = null;
-    notifyListeners();
-    try {
-      await _store.updateSettings(
-        id: instanceId,
-        name: name,
-        javaPath: javaPath,
-        clearJavaPath: clearJavaPath,
-        memoryMb: memoryMb,
-        clearMemoryMb: clearMemoryMb,
-        extraJvmArgs: extraJvmArgs,
-        clearExtraJvmArgs: clearExtraJvmArgs,
-        windowWidth: windowWidth,
-        windowHeight: windowHeight,
-        fullscreen: fullscreen,
-        clearWindowSettings: clearWindowSettings,
-        environmentVars: environmentVars,
-        clearEnvironmentVars: clearEnvironmentVars,
-        preLaunchCommand: preLaunchCommand,
-        wrapperCommand: wrapperCommand,
-        postExitCommand: postExitCommand,
-        clearHooks: clearHooks,
-        updateChannel: updateChannel,
-      );
-      syncFromInstance(instance);
-    } catch (e) {
-      error = '$e';
-    } finally {
-      if (!_disposed) {
-        saving = false;
+  }) {
+    // 串行排队：上一次保存未完成时等待，而不是静默丢弃本次编辑。
+    final completer = Completer<void>();
+    final previous = _saveChain;
+    _saveChain = completer.future;
+    unawaited(
+      previous.then((_) async {
+        if (_disposed) {
+          completer.complete();
+          return;
+        }
+        saving = true;
+        error = null;
         notifyListeners();
-      }
-    }
+        try {
+          await _store.updateSettings(
+            id: instanceId,
+            name: name,
+            javaPath: javaPath,
+            clearJavaPath: clearJavaPath,
+            memoryMb: memoryMb,
+            clearMemoryMb: clearMemoryMb,
+            extraJvmArgs: extraJvmArgs,
+            clearExtraJvmArgs: clearExtraJvmArgs,
+            windowWidth: windowWidth,
+            windowHeight: windowHeight,
+            fullscreen: fullscreen,
+            clearWindowSettings: clearWindowSettings,
+            environmentVars: environmentVars,
+            clearEnvironmentVars: clearEnvironmentVars,
+            preLaunchCommand: preLaunchCommand,
+            wrapperCommand: wrapperCommand,
+            postExitCommand: postExitCommand,
+            clearHooks: clearHooks,
+            updateChannel: updateChannel,
+          );
+          syncFromInstance(instance);
+        } catch (e) {
+          error = '$e';
+        } finally {
+          if (!_disposed) {
+            saving = false;
+            notifyListeners();
+          }
+          completer.complete();
+        }
+      }),
+    );
+    return completer.future;
   }
 
   Future<void> persistGroups(List<String> next) async {

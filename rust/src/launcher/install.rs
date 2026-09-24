@@ -320,15 +320,19 @@ pub async fn launch_instance(
         .memory_mb
         .unwrap_or(defaults.memory_mb)
         .clamp(512, 131_072) as u32;
+    // 空白覆盖不应遮蔽全局默认参数；shell_words 支持引号包裹含空格的值。
     let extra_source = instance
         .extra_jvm_args
         .as_deref()
+        .filter(|s| !s.trim().is_empty())
         .or(defaults.extra_jvm_args.as_deref())
         .unwrap_or("");
-    let extra: Vec<String> = extra_source
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect();
+    let extra: Vec<String> = shell_words::split(extra_source).unwrap_or_else(|_| {
+        extra_source
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    });
 
     let auth = super::args::LaunchAuth::from(&account);
     dirs::ensure_instance_dir(&resource, &instance.path).await?;

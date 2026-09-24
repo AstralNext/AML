@@ -380,6 +380,14 @@ fn path_needs_execute_bit(path: &Path) -> bool {
 async fn ensure_java_home_executables(java_home: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
+    // macOS: 沙箱内启动从网络下载的 java 子进程会被 Gatekeeper 拒，
+    // 因为解压出的文件带 com.apple.quarantine / com.apple.provenance
+    // 扩展属性。先递归清除整个 JRE 目录树的隔离属性。
+    #[cfg(target_os = "macos")]
+    {
+        clear_xattr_recursive(java_home)?;
+    }
+
     let mut stack = vec![java_home.join("bin"), java_home.join("lib")];
     while let Some(dir) = stack.pop() {
         if !dir.is_dir() {
@@ -405,6 +413,31 @@ async fn ensure_java_home_executables(java_home: &Path) -> Result<()> {
             if mode & 0o111 == 0 {
                 perms.set_mode(mode | 0o111);
                 fs::set_permissions(&path, perms).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 递归清除 macOS 隔离扩展属性。
+#[cfg(target_os = "macos")]
+fn clear_xattr_recursive(root: &Path) -> Result<()> {
+    // 先清根目录本身
+    let _ = xattr::remove(root, "com.apple.quarantine");
+    let _ = xattr::remove(root, "com.apple.provenance");
+
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // 不论文件还是目录，都尝试清掉隔离属性
+            let _ = xattr::remove(&path, "com.apple.quarantine");
+            let _ = xattr::remove(&path, "com.apple.provenance");
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_dir() {
+                    stack.push(path);
+                }
             }
         }
     }
@@ -517,8 +550,11 @@ async fn configure_java_installation(
 /// 构建Java可执行文件路径
 fn build_java_executable_path(target_path: &Path, java_version: i32) -> PathBuf {
     if cfg!(target_os = "macos") {
+        // target_path 已是重命名后的 zulu{N} 目录，
+        // 其下直接是 macOS bundle 结构 Contents/Home/bin/java。
+        // 不要再拼 zulu-{N}.jre 那一层（rename 已抹掉）。
+        let _ = java_version;
         target_path
-            .join(format!("zulu-{}.jre", java_version))
             .join("Contents")
             .join("Home")
             .join("bin")

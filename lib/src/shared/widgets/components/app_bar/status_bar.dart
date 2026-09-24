@@ -30,51 +30,56 @@ class StatusBar extends StatefulWidget implements PreferredSizeWidget {
 }
 
 class _StatusBarState extends State<StatusBar> {
+  /// 桌面端窗口拖拽区域。
+  Widget _dragArea(Widget child) {
+    return GestureDetector(
+      // 设置behavior确保即使在透明区域也能捕获手势事件
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (details) {
+        if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+          windowManager.startDragging();
+        }
+      },
+      child: child,
+    );
+  }
+
+  Widget _logo({EdgeInsets padding = const EdgeInsets.only(left: 14.0)}) {
+    return Padding(
+      padding: padding,
+      child: Image.asset(
+        'assets/logo.png',
+        height: 56,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // macOS 使用系统自带的红绿灯按钮（TitleBarStyle.hidden 仍保留），
+    // 不显示自定义窗口按钮；左侧留给红绿灯，logo 放到右侧。
+    // Windows/Linux 隐藏标题栏后没有原生按钮，保留自定义按钮。
+    final isMacOS = Platform.isMacOS;
+
     return Container(
       height: StatusBar.kStatusBarHeight,
       color: Colors.transparent,
       child: Row(
         children: [
+          // 为 macOS 红绿灯按钮预留左侧空间（空白处仍可拖动窗口）。
+          if (isMacOS)
+            _dragArea(const SizedBox(width: 78, height: double.infinity)),
           Expanded(
-            child: GestureDetector(
-              // 设置behavior确保即使在透明区域也能捕获手势事件
-              behavior: HitTestBehavior.opaque,
-              onPanStart: (details) {
-                if (Platform.isWindows ||
-                    Platform.isMacOS ||
-                    Platform.isLinux) {
-                  windowManager.startDragging();
-                }
-              },
-              // 使用Container代替SizedBox，并设置behavior确保整个区域可点击
-              child: Container(
+            child: _dragArea(
+              Container(
                 width: double.infinity,
                 height: double.infinity,
-                color: Colors.transparent, // 透明背景但可以接收事件
-                // 使用Stack代替Align，确保整个区域都能响应手势
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Container(
-                        color: Colors.transparent, // 确保整个区域都能接收事件
-                      ),
-                    ),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Padding(
-                        padding: const EdgeInsets.only(left: 14.0),
-                        child: Image.asset(
-                          'assets/logo.png',
-                          height: 56,
-                          fit: BoxFit.contain,
-                          filterQuality: FilterQuality.high,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                color: Colors.transparent,
+                alignment: Alignment.centerLeft,
+                // macOS 左侧是红绿灯区域，logo 不放这里。
+                child: isMacOS ? null : _logo(),
               ),
             ),
           ),
@@ -83,32 +88,42 @@ class _StatusBarState extends State<StatusBar> {
           const SizedBox(width: 15),
           // 游戏状态显示
           const _GameStatus(),
-          // 占位 15宽度
-          const SizedBox(width: 15),
-          // 最小化按钮
-          CustomButton(
-            icon: Icons.horizontal_rule,
-            label: '最小化',
-            onTap: () {
-              if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-                windowManager.minimize();
-              }
-            },
-          ),
-          // 最大化/还原按钮
-          const _MaximizeButton(),
-          // 关闭按钮
-          CustomButton(
-            icon: Icons.close,
-            label: '关闭',
-            hoverBackgroundColor: AppColors.dangerHover,
-            hoverIconColor: AppColors.dangerOnHover,
-            onTap: () {
-              if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-                windowManager.close();
-              }
-            },
-          ),
+          if (isMacOS) ...[
+            const SizedBox(width: 15),
+            // logo 放到右侧原窗口按钮位置。
+            _dragArea(_logo(padding: const EdgeInsets.only(right: 14.0))),
+          ] else ...[
+            // 占位 15宽度
+            const SizedBox(width: 15),
+            // 最小化按钮
+            CustomButton(
+              icon: Icons.horizontal_rule,
+              label: '最小化',
+              onTap: () {
+                if (Platform.isWindows ||
+                    Platform.isMacOS ||
+                    Platform.isLinux) {
+                  windowManager.minimize();
+                }
+              },
+            ),
+            // 最大化/还原按钮
+            const _MaximizeButton(),
+            // 关闭按钮
+            CustomButton(
+              icon: Icons.close,
+              label: '关闭',
+              hoverBackgroundColor: AppColors.dangerHover,
+              hoverIconColor: AppColors.dangerOnHover,
+              onTap: () {
+                if (Platform.isWindows ||
+                    Platform.isMacOS ||
+                    Platform.isLinux) {
+                  windowManager.close();
+                }
+              },
+            ),
+          ],
         ],
       ),
     );

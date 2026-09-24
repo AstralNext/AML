@@ -41,6 +41,7 @@ quick-xml = { version = "0.41.0", features = ["async-tokio"] }
 shell-words = "1.1.1"
 fs4 = { version = "0.12", features = ["sync"] }
 hickory-resolver = "0.25"
+xattr = "1"
 
 [build-dependencies]
 dunce = "1.0"
