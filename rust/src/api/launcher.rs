@@ -1713,22 +1713,20 @@ pub async fn export_instance_pack(
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<(), String> {
     let cb = progress_cb(on_progress);
-    launcher::pack::export_instance_pack(
-        &instance_id,
-        &export_path,
-        &format,
+    let options = launcher::pack::PackExportOptions::from_selection(
         pack_name,
         version_id,
         description,
         include_ids,
         include_paths,
         Some(cb),
-    )
-    .await
-    .map_err(|e| {
-        eprintln!("[AML] export_instance_pack({instance_id}, {format}): {e:#}");
-        format!("{e:#}")
-    })
+    );
+    launcher::pack::export_instance_pack(&instance_id, &export_path, &format, options)
+        .await
+        .map_err(|e| {
+            eprintln!("[AML] export_instance_pack({instance_id}, {format}): {e:#}");
+            format!("{e:#}")
+        })
 }
 
 /// Create a desktop shortcut that launches AML with an `aml://launch/…` argument.

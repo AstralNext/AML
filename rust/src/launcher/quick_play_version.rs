@@ -90,3 +90,13 @@ impl QuickPlayVersion {
         }
     }
 }
+
+/// Resolved quick-play target for one launch (at most one of
+/// `singleplayer`/`multiplayer` is `Some`) plus the version capability flags.
+#[derive(Debug, Clone)]
+pub struct QuickPlayOptions<'a> {
+    pub singleplayer: Option<&'a str>,
+    pub multiplayer: Option<&'a str>,
+    pub server_endpoint: Option<(String, u16)>,
+    pub version: QuickPlayVersion,
+}

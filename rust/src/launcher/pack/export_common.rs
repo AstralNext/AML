@@ -1,5 +1,8 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use crate::launcher::download::ProgressFn;
 
 /// User-selectable content categories for pack export.
 #[derive(Debug, Clone)]
@@ -70,6 +73,51 @@ pub struct PackContentFile {
     pub size_bytes: u64,
     pub icon_url: Option<String>,
     pub title: Option<String>,
+}
+
+/// Metadata and file selection shared by every pack exporter.
+///
+/// `version`/`description` are only emitted by formats that support them
+/// (mrpack / mcbbs); the MultiMC exporter ignores those two fields.
+pub struct PackExportOptions {
+    pub pack_name: Option<String>,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub includes: ExportIncludes,
+    pub path_filter: Option<HashSet<String>>,
+    pub on_progress: Option<ProgressFn>,
+}
+
+impl PackExportOptions {
+    /// Build options from the raw FFI selection inputs: category id list and
+    /// slash-normalized relative path allowlist.
+    pub fn from_selection(
+        pack_name: Option<String>,
+        version: Option<String>,
+        description: Option<String>,
+        include_ids: Option<Vec<String>>,
+        include_paths: Option<Vec<String>>,
+        on_progress: Option<ProgressFn>,
+    ) -> Self {
+        let includes = match &include_ids {
+            Some(ids) => ExportIncludes::from_ids(ids),
+            None => ExportIncludes::default(),
+        };
+        let path_filter = include_paths.map(|paths| {
+            paths
+                .into_iter()
+                .map(|p| p.replace('\\', "/"))
+                .collect::<HashSet<_>>()
+        });
+        Self {
+            pack_name,
+            version,
+            description,
+            includes,
+            path_filter,
+            on_progress,
+        }
+    }
 }
 
 /// One content category shown in export/import previews.

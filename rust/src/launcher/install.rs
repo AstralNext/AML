@@ -399,6 +399,12 @@ pub async fn launch_instance(
             _ => {}
         }
     }
+    let quick_play = super::quick_play_version::QuickPlayOptions {
+        singleplayer: quick_play_singleplayer.as_deref(),
+        multiplayer: quick_play_multiplayer.as_deref(),
+        server_endpoint,
+        version: quick_play_version,
+    };
     let mut args = super::args::build_launch_args(
         &resource,
         &instance.path,
@@ -411,10 +417,7 @@ pub async fn launch_instance(
         memory,
         resolution,
         &extra,
-        quick_play_singleplayer.as_deref(),
-        quick_play_multiplayer.as_deref(),
-        server_endpoint,
-        quick_play_version,
+        &quick_play,
         rpc_server.address(),
     )?;
     if fullscreen

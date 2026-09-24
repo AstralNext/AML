@@ -440,10 +440,11 @@ pub(super) async fn install_from_cf_meta(
                             &rel,
                             &file_name,
                             &file,
-                            Some(url),
-                            Some(sha1),
-                            Some(bytes.len() as i64),
-                            false,
+                            PackFileFetch::Downloaded {
+                                url,
+                                sha1,
+                                size_bytes: bytes.len() as i64,
+                            },
                         );
                         let _ = db::upsert_content_entry(&pool, &entry).await;
                         if let Some(b) = &batch {
@@ -458,10 +459,7 @@ pub(super) async fn install_from_cf_meta(
                             &rel,
                             &file_name,
                             &file,
-                            Some(url),
-                            None,
-                            None,
-                            true,
+                            PackFileFetch::Pending { url },
                         );
                         let _ = db::upsert_content_entry(&pool, &entry).await;
                         skipped.lock().await.push(file_name);
@@ -560,18 +558,34 @@ pub(super) async fn install_from_cf_meta(
     db::get_instance(&state.pool, &created.id).await
 }
 
-// Field-by-field row builder; each argument maps 1:1 to a ContentEntry column.
-#[allow(clippy::too_many_arguments)]
+/// Outcome of fetching one pack file: bytes on disk, or a pending marker that
+/// points at the download URL for a later retry.
+enum PackFileFetch {
+    Downloaded {
+        url: String,
+        sha1: String,
+        size_bytes: i64,
+    },
+    Pending {
+        url: String,
+    },
+}
+
 fn pack_file_content_entry(
     instance_id: String,
     rel: &str,
     file_name: &str,
     file: &CfFileRef,
-    download_url: Option<String>,
-    sha1: Option<String>,
-    size_bytes: Option<i64>,
-    pending: bool,
+    fetch: PackFileFetch,
 ) -> db::ContentEntry {
+    let (download_url, sha1, size_bytes, pending) = match fetch {
+        PackFileFetch::Downloaded {
+            url,
+            sha1,
+            size_bytes,
+        } => (Some(url), Some(sha1), Some(size_bytes), false),
+        PackFileFetch::Pending { url } => (Some(url), None, None, true),
+    };
     let rel = rel.replace('\\', "/");
     let project_type = if rel.starts_with("resourcepacks/") {
         "resourcepack"

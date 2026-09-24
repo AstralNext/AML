@@ -22,6 +22,15 @@ use crate::state::{resource_dir, try_state};
 
 const QUILT_FABRIC_API_EXCEPTION: &str = "P7dR8mSH";
 
+/// Shared services and target instance for one content-install operation.
+struct InstallCtx<'a> {
+    client: &'a reqwest::Client,
+    pool: &'a sqlx::SqlitePool,
+    instance_id: &'a str,
+    instance_dir: &'a Path,
+    on_progress: &'a Option<ProgressFn>,
+}
+
 pub async fn install_modrinth_version(
     instance_id: &str,
     version_id: &str,
@@ -75,30 +84,24 @@ pub async fn install_modrinth_version(
     let mut visited_projects = HashSet::new();
     visited_projects.insert(version.project_id.clone());
 
-    let path = install_version_file(
-        &client,
-        &state.pool,
+    let ctx = InstallCtx {
+        client: &client,
+        pool: &state.pool,
         instance_id,
-        &instance_dir,
-        &version,
-        project.as_ref(),
-        content_type,
-        &on_progress,
-        0.2,
-    )
-    .await?;
+        instance_dir: &instance_dir,
+        on_progress: &on_progress,
+    };
+
+    let path = install_version_file(&ctx, &version, project.as_ref(), content_type, 0.2).await?;
 
     if install_deps {
         report(0.45, "Resolving required dependencies…".into());
         install_required_deps(
-            &client,
-            &state.pool,
+            &ctx,
             &instance,
-            &instance_dir,
             &version,
             &mut visited_versions,
             &mut visited_projects,
-            &on_progress,
         )
         .await?;
     } else {
@@ -109,17 +112,11 @@ pub async fn install_modrinth_version(
     Ok(path.to_string_lossy().to_string())
 }
 
-// Install pipeline step; arguments are carried from the single orchestrator.
-#[allow(clippy::too_many_arguments)]
 async fn install_version_file(
-    client: &reqwest::Client,
-    pool: &sqlx::SqlitePool,
-    instance_id: &str,
-    instance_dir: &Path,
+    ctx: &InstallCtx<'_>,
     version: &ModrinthVersion,
     project: Option<&ModrinthProjectInfo>,
     content_type: ContentType,
-    on_progress: &Option<ProgressFn>,
     progress: f64,
 ) -> Result<PathBuf> {
     let file = version
@@ -130,29 +127,32 @@ async fn install_version_file(
         .ok_or_else(|| anyhow!("version has no files"))?;
 
     // Already have this exact version ? do not re-download / duplicate.
-    let existing = db::list_content_by_project(pool, instance_id, &version.project_id).await?;
+    let existing =
+        db::list_content_by_project(ctx.pool, ctx.instance_id, &version.project_id).await?;
     if let Some(hit) = existing
         .iter()
         .find(|e| e.version_id.as_deref() == Some(version.id.as_str()))
     {
-        return Ok(instance_dir.join(&hit.relative_path));
+        return Ok(ctx.instance_dir.join(&hit.relative_path));
     }
 
     // Replace any previously installed files for this project (update / reinstall).
     for old in &existing {
-        let old_path = instance_dir.join(&old.relative_path);
-        let disabled = instance_dir.join(format!("{}.disabled", old.relative_path));
+        let old_path = ctx.instance_dir.join(&old.relative_path);
+        let disabled = ctx
+            .instance_dir
+            .join(format!("{}.disabled", old.relative_path));
         let _ = tokio::fs::remove_file(&old_path).await;
         let _ = tokio::fs::remove_file(&disabled).await;
-        db::remove_content_entry(pool, instance_id, &old.relative_path).await?;
+        db::remove_content_entry(ctx.pool, ctx.instance_id, &old.relative_path).await?;
     }
 
-    if let Some(cb) = on_progress {
+    if let Some(cb) = ctx.on_progress {
         cb(progress, format!("Downloading {}…", file.filename));
     }
     let progress_value = progress;
     let on_retry = |attempt: u32, max: u32| {
-        if let Some(cb) = on_progress {
+        if let Some(cb) = ctx.on_progress {
             cb(
                 progress_value,
                 format!("Retrying download ({attempt}/{max})…"),
@@ -161,7 +161,7 @@ async fn install_version_file(
     };
     // Map streamed byte progress into the download phase [progress, progress+0.25]
     // so the UI shows live downloaded/total/speed instead of jumping 0.2 → 0.45.
-    let on_bytes = on_progress.clone().map(|cb| {
+    let on_bytes = ctx.on_progress.clone().map(|cb| {
         progress::file_bytes_cb(
             cb,
             "Downloading",
@@ -171,7 +171,7 @@ async fn install_version_file(
         )
     });
     let bytes = download::download_checked_with_mcim_fallback_bytes(
-        client,
+        ctx.client,
         &file.url,
         None,
         Some(&on_retry),
@@ -180,7 +180,8 @@ async fn install_version_file(
     .await?;
     let sha1 = download::sha1_hex(&bytes);
 
-    let dest = instance_dir
+    let dest = ctx
+        .instance_dir
         .join(content_type.folder())
         .join(&file.filename);
     if let Some(parent) = dest.parent() {
@@ -196,14 +197,14 @@ async fn install_version_file(
     let mut author_type = None;
     if let Some(p) = project {
         if let Some(org_id) = p.organization.as_deref() {
-            if let Ok(Some(owner)) = fetch_org(client, org_id).await {
+            if let Ok(Some(owner)) = fetch_org(ctx.client, org_id).await {
                 author = Some(owner.name);
                 author_avatar_url = owner.avatar_url;
                 author_id = Some(owner.id);
                 author_type = Some(owner.kind);
             }
         } else if let Some(team_id) = p.team.as_deref() {
-            if let Ok(Some(owner)) = fetch_team_owner(client, team_id).await {
+            if let Ok(Some(owner)) = fetch_team_owner(ctx.client, team_id).await {
                 author = Some(owner.name);
                 author_avatar_url = owner.avatar_url;
                 author_id = Some(owner.id);
@@ -213,7 +214,7 @@ async fn install_version_file(
     }
     let entry = db::ContentEntry {
         id: format!("content:{}", uuid::Uuid::new_v4()),
-        instance_id: instance_id.to_string(),
+        instance_id: ctx.instance_id.to_string(),
         relative_path: relative,
         file_name: file.filename.clone(),
         project_type: match content_type {
@@ -241,22 +242,16 @@ async fn install_version_file(
         pending: false,
         download_url: None,
     };
-    db::upsert_content_entry(pool, &entry).await?;
+    db::upsert_content_entry(ctx.pool, &entry).await?;
     Ok(dest)
 }
 
-// Dependency-resolution loop; the visited sets and install context live in
-// the single orchestrator.
-#[allow(clippy::too_many_arguments)]
 async fn install_required_deps(
-    client: &reqwest::Client,
-    pool: &sqlx::SqlitePool,
+    ctx: &InstallCtx<'_>,
     instance: &Instance,
-    instance_dir: &Path,
     root: &ModrinthVersion,
     visited_versions: &mut HashSet<String>,
     visited_projects: &mut HashSet<String>,
-    on_progress: &Option<ProgressFn>,
 ) -> Result<()> {
     let loaders = ContentType::Mod.target_loaders(&instance.loader);
     let game = instance.game_version.as_str();
@@ -278,16 +273,16 @@ async fn install_required_deps(
             }
 
             let dep_version = if let Some(vid) = &dep.version_id {
-                fetch_version(client, vid).await?
+                fetch_version(ctx.client, vid).await?
             } else if let Some(pid) = &dep.project_id {
                 if visited_projects.contains(pid) {
                     continue;
                 }
-                let versions = fetch_project_versions(client, pid).await?;
+                let versions = fetch_project_versions(ctx.client, pid).await?;
                 match select_compatible_version(versions, ContentType::Mod, game, &loaders) {
                     Some(v) => v,
                     None => {
-                        if let Some(cb) = on_progress {
+                        if let Some(cb) = ctx.on_progress {
                             cb(0.7, format!("Skipping incompatible dependency {pid}"));
                         }
                         continue;
@@ -301,24 +296,14 @@ async fn install_required_deps(
                 continue;
             }
 
-            if let Some(cb) = on_progress {
+            if let Some(cb) = ctx.on_progress {
                 cb(0.75, format!("Installing dependency {}…", dep_version.name));
             }
-            let project = fetch_project_info(client, &dep_version.project_id)
+            let project = fetch_project_info(ctx.client, &dep_version.project_id)
                 .await
                 .ok();
-            let _ = install_version_file(
-                client,
-                pool,
-                &instance.id,
-                instance_dir,
-                &dep_version,
-                project.as_ref(),
-                ContentType::Mod,
-                on_progress,
-                0.8,
-            )
-            .await?;
+            install_version_file(ctx, &dep_version, project.as_ref(), ContentType::Mod, 0.8)
+                .await?;
             stack.push(dep_version);
         }
     }

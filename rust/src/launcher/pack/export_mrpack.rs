@@ -7,14 +7,13 @@ use zip::{CompressionMethod, ZipWriter};
 
 use crate::config::modrinth_api_url;
 use crate::launcher::dirs;
-use crate::launcher::download::ProgressFn;
 use crate::state::db;
 use crate::state::models::ModLoader;
 use crate::state::{resource_dir, try_state};
 
 use super::export_common::{
     collect_override_candidates, filter_paths_by_rel, relative_path_allowed,
-    should_skip_export_path, ExportIncludes,
+    should_skip_export_path, PackExportOptions,
 };
 
 #[derive(serde::Serialize)]
@@ -64,18 +63,19 @@ struct ModrinthHashesApi {
 }
 
 /// Export an instance to a `.mrpack` archive.
-// Internal export entrypoint behind the FFI wrapper.
-#[allow(clippy::too_many_arguments)]
 pub async fn export_instance_mrpack(
     instance_id: &str,
     export_path: &str,
-    pack_name: Option<String>,
-    version_id: Option<String>,
-    description: Option<String>,
-    includes: ExportIncludes,
-    path_filter: Option<std::collections::HashSet<String>>,
-    on_progress: Option<ProgressFn>,
+    options: PackExportOptions,
 ) -> Result<()> {
+    let PackExportOptions {
+        pack_name,
+        version: version_id,
+        description,
+        includes,
+        path_filter,
+        on_progress,
+    } = options;
     let state = try_state()?;
     let resource = resource_dir().await?;
     let instance = db::get_instance(&state.pool, instance_id).await?;
