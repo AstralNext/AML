@@ -27,6 +27,9 @@ pub async fn sync_instance_content_metadata(instance_id: &str, check_updates: bo
 
     let instance = db::get_instance(&state.pool, instance_id).await?;
     let root = dirs::instance_dir(&resource, &instance.path);
+    if instance.install_stage == crate::state::models::InstallStage::NotInstalled.as_str() && root.exists() {
+        let _ = db::set_install_stage(&state.pool, instance_id, crate::state::models::InstallStage::Installed).await;
+    }
     let client = manifest::http_client()?;
 
     let mut db_entries = db::list_content_for_instance(&state.pool, instance_id).await?;
@@ -174,9 +177,13 @@ pub async fn sync_instance_content_metadata(instance_id: &str, check_updates: bo
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
-        let matched = fetch_versions_from_hashes(&client, &hashes)
-            .await
-            .unwrap_or_default();
+        let matched = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            fetch_versions_from_hashes(&client, &hashes),
+        )
+        .await
+        .unwrap_or(Ok(std::collections::HashMap::new()))
+        .unwrap_or_default();
         if !matched.is_empty() {
             let project_ids: Vec<String> = matched
                 .values()
@@ -184,9 +191,13 @@ pub async fn sync_instance_content_metadata(instance_id: &str, check_updates: bo
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
-            let projects = fetch_projects_many(&client, &project_ids)
-                .await
-                .unwrap_or_default();
+            let projects = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                fetch_projects_many(&client, &project_ids),
+            )
+            .await
+            .unwrap_or(Ok(std::collections::HashMap::new()))
+            .unwrap_or_default();
             let owners = resolve_project_owners(&client, &projects).await;
 
             for (relative, sha1) in need_hash_lookup {
@@ -278,8 +289,11 @@ pub async fn sync_instance_content_metadata(instance_id: &str, check_updates: bo
                 vec![instance.loader.to_lowercase()]
             };
             let game_versions = vec![instance.game_version.clone()];
-            if let Ok(updates) =
-                fetch_version_updates(&client, &update_hashes, &loaders, &game_versions).await
+            if let Ok(Ok(updates)) = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                fetch_version_updates(&client, &update_hashes, &loaders, &game_versions),
+            )
+            .await
             {
                 for entry in by_path.values_mut() {
                     if entry

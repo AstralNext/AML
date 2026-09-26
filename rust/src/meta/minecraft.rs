@@ -6,13 +6,16 @@ use super::modded::{Processor, SidedDataEntry};
 
 pub const CURRENT_FORMAT_VERSION: usize = 0;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum VersionType {
+    #[default]
     Release,
     Snapshot,
     OldAlpha,
     OldBeta,
+    #[serde(other)]
+    Unknown,
 }
 
 impl VersionType {
@@ -22,6 +25,7 @@ impl VersionType {
             VersionType::Snapshot => "snapshot",
             VersionType::OldAlpha => "old_alpha",
             VersionType::OldBeta => "old_beta",
+            VersionType::Unknown => "release",
         }
     }
 }
@@ -53,24 +57,32 @@ pub struct VersionManifest {
     pub versions: Vec<Version>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetIndex {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub sha1: String,
+    #[serde(default)]
     pub size: u32,
+    #[serde(default)]
     pub total_size: u32,
+    #[serde(default)]
     pub url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadType {
+    #[default]
     Client,
     ClientMappings,
     Server,
     ServerMappings,
     WindowsServer,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -104,7 +116,7 @@ pub enum RuleAction {
     Disallow,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum Os {
     Osx,
@@ -114,6 +126,8 @@ pub enum Os {
     Linux,
     LinuxArm64,
     LinuxArm32,
+    #[default]
+    #[serde(other)]
     Unknown,
 }
 
@@ -262,18 +276,24 @@ pub enum Argument {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Copy, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ArgumentType {
+    #[default]
     Game,
     Jvm,
     DefaultUserJvm,
+    #[serde(other)]
+    Unknown,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LoggingSide {
+    #[default]
     Client,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -302,22 +322,29 @@ pub enum LoggingConfiguration {
 pub struct VersionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<ArgumentType, Vec<Argument>>>,
+    #[serde(default)]
     pub asset_index: AssetIndex,
+    #[serde(default)]
     pub assets: String,
+    #[serde(default)]
     pub downloads: HashMap<DownloadType, Download>,
     pub id: String,
     pub java_version: Option<JavaVersion>,
+    #[serde(default)]
     pub libraries: Vec<Library>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logging: Option<HashMap<LoggingSide, LoggingConfiguration>>,
+    #[serde(default)]
     pub main_class: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub minecraft_arguments: Option<String>,
     #[serde(default)]
     pub minimum_launcher_version: u32,
+    #[serde(default = "Utc::now")]
     pub release_time: DateTime<Utc>,
+    #[serde(default = "Utc::now")]
     pub time: DateTime<Utc>,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub type_: VersionType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<HashMap<String, SidedDataEntry>>,

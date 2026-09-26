@@ -177,6 +177,50 @@ pub(super) async fn migrate(pool: &SqlitePool) -> Result<()> {
 
     // Discover title/summary + detail-body translation caches.
     crate::state::project_i18n::migrate_tables(pool).await?;
+
+    // Auto-repair instances where game_version was corrupted or set to folder/custom name
+    if let Ok(rows) = sqlx::query("SELECT id, game_version, loader_version FROM instances")
+        .fetch_all(pool)
+        .await
+    {
+        let re_mc = regex::Regex::new(r"\b1\.\d+(?:\.\d+)?\b").unwrap();
+        for row in rows {
+            let id: String = row.get("id");
+            let gv: String = row.get("game_version");
+            let lv: Option<String> = row.get("loader_version");
+            if !re_mc.is_match(&gv) {
+                let mut resolved = None;
+                if let Some(lver) = &lv {
+                    if lver.starts_with("47.") {
+                        resolved = Some("1.20.1");
+                    } else if lver.starts_with("14.23.5.") {
+                        resolved = Some("1.12.2");
+                    } else if lver.starts_with("36.") {
+                        resolved = Some("1.16.5");
+                    } else if lver.starts_with("40.") {
+                        resolved = Some("1.18.2");
+                    } else if lver.starts_with("43.") {
+                        resolved = Some("1.19.2");
+                    } else if lver.starts_with("48.") {
+                        resolved = Some("1.20.2");
+                    } else if lver.starts_with("49.") {
+                        resolved = Some("1.20.4");
+                    } else if lver.starts_with("50.") {
+                        resolved = Some("1.20.6");
+                    } else if lver.starts_with("51.") {
+                        resolved = Some("1.21");
+                    }
+                }
+                let real_ver = resolved.unwrap_or("1.20.1");
+                let _ = sqlx::query("UPDATE instances SET game_version = ? WHERE id = ?")
+                    .bind(real_ver)
+                    .bind(&id)
+                    .execute(pool)
+                    .await;
+            }
+        }
+    }
+
     Ok(())
 }
 

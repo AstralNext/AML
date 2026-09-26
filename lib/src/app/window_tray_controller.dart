@@ -55,6 +55,13 @@ class WindowTrayController with WindowListener, TrayListener {
       trayManager.addListener(this);
     } catch (e, st) {
       debugPrint('tray init failed: $e\n$st');
+      if (Platform.isLinux) {
+        debugPrint(
+          '[tray] Linux 需要 libayatana-appindicator3-1 或 libappindicator3-1，'
+          '并且桌面面板需要提供 StatusNotifier 宿主（GNOME 需安装 AppIndicator '
+          '扩展，wlroots/waybar 需启用 tray 模块）。',
+        );
+      }
     }
 
     _onCloseToTrayChanged = (enabled) {

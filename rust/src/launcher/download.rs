@@ -586,6 +586,26 @@ async fn download_one_library(
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn has_system_glfw() -> bool {
+    for path in [
+        "/usr/lib/libglfw.so",
+        "/usr/lib64/libglfw.so",
+        "/usr/lib/x86_64-linux-gnu/libglfw.so",
+        "/usr/lib/aarch64-linux-gnu/libglfw.so",
+    ] {
+        if std::path::Path::new(path).exists() {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn has_system_glfw() -> bool {
+    false
+}
+
 async fn extract_natives(
     client: &Client,
     resource_dir: &str,
@@ -598,12 +618,19 @@ async fn extract_natives(
     tokio::fs::create_dir_all(&natives_dir).await?;
     let libs_root = dirs::libraries(resource_dir);
 
+    #[cfg(target_os = "linux")]
+    let use_native_glfw = has_system_glfw();
+
     for lib in &info.libraries {
         if !parse_rules(
             lib.rules.as_deref().unwrap_or(&[]),
             java_arch,
             RuleFeatures::default(),
         ) {
+            continue;
+        }
+        #[cfg(target_os = "linux")]
+        if use_native_glfw && lib.name.to_lowercase().contains("glfw") {
             continue;
         }
         let Some((os_key, classifiers)) = lib.natives_os_key_and_classifiers(java_arch) else {
@@ -645,6 +672,13 @@ async fn extract_natives(
             &natives_dir,
             lib.extract.as_ref().and_then(|e| e.exclude.as_ref()),
         )?;
+    }
+    #[cfg(target_os = "linux")]
+    if use_native_glfw {
+        let glfw_path = natives_dir.join("libglfw.so");
+        if glfw_path.exists() || glfw_path.is_symlink() {
+            let _ = tokio::fs::remove_file(&glfw_path).await;
+        }
     }
     Ok(())
 }

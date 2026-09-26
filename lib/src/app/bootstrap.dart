@@ -13,6 +13,7 @@ import 'package:aml/src/features/instances/application/account_store.dart';
 import 'package:aml/src/features/instances/application/instance_store.dart';
 import 'package:aml/src/rust/frb_generated.dart';
 import 'package:flutter/widgets.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 Future<void> bootstrap({List<String> args = const []}) async {
@@ -23,6 +24,9 @@ Future<void> bootstrap({List<String> args = const []}) async {
 
   final directory = await getApplicationSupportDirectory();
   setupServiceLocator(appDataDir: directory.path);
+  // Java 运行时目录：Rust 侧自动安装的目标目录，设置/存储页面也会展示这个路径。
+  // 提前创建，避免用户看到一条并不存在的「Java 下载路径」。
+  await Directory(p.join(directory.path, 'java')).create(recursive: true);
 
   await RustLib.init();
   getIt<RuntimeState>().appDataDirectory.value = directory.path;

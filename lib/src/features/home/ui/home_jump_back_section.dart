@@ -93,7 +93,9 @@ class _HomeJumpBackSectionState extends State<HomeJumpBackSection> {
   }
 
   Future<void> _loadJumpBackIn({bool notifyLoading = true}) async {
-    setState(() => _jumpLoading = true);
+    if (mounted && !_jumpLoading) {
+      setState(() => _jumpLoading = true);
+    }
     if (notifyLoading) _notifySummary();
     final store = getIt<InstanceStore>();
     final instances = List<rust.InstanceDto>.from(store.instances.value);

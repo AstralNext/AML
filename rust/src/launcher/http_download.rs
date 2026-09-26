@@ -27,8 +27,8 @@ pub const MULTI_THREAD_THRESHOLD: u64 = 10 * 1024 * 1024;
 pub const MIN_PART_SIZE: u64 = 2 * 1024 * 1024;
 
 const PART_ATTEMPTS: u32 = 3;
-const HEADER_TIMEOUT: Duration = Duration::from_secs(60);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+const HEADER_TIMEOUT: Duration = Duration::from_secs(15);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug)]
 struct RangeNotSupported;
@@ -41,7 +41,7 @@ impl std::fmt::Display for RangeNotSupported {
 
 impl std::error::Error for RangeNotSupported {}
 
-struct ByteMeter {
+pub(crate) struct ByteMeter {
     got: AtomicU64,
     total: Option<u64>,
     cb: Option<BytesProgressFn>,
@@ -97,8 +97,114 @@ impl ByteMeter {
     }
 }
 
+/// 当内置 HTTP 下载在当前网络环境下超时或停滞时，全量将任务转移至操作系统最高可靠性的独立子进程执行 (如系统 curl)
+pub(crate) async fn download_via_reliable_process(
+    url: &str,
+    dest: &Path,
+    extra_headers: Option<&[(&str, &str)]>,
+    meter: Option<&ByteMeter>,
+) -> Result<()> {
+    tracing::warn!(
+        url,
+        dest = %dest.display(),
+        "【可靠进程接管】检测到连接停滞或超时，已全量将下载任务转移到系统可靠进程执行"
+    );
+
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    let mut cmd = tokio::process::Command::new("curl");
+    cmd.arg("-f")
+        .arg("-L")
+        .arg("-C")
+        .arg("-") // 自动断点续传，不重复下载已收到的有效分片
+        .arg("--connect-timeout")
+        .arg("10")
+        .arg("--speed-limit")
+        .arg("1024")
+        .arg("--speed-time")
+        .arg("15") // 15秒传输速度小于1KB自动踢掉重试，防卡死
+        .arg("--retry")
+        .arg("3")
+        .arg("--retry-delay")
+        .arg("1")
+        .arg("-s")
+        .arg("-o")
+        .arg(dest)
+        .arg(url);
+
+    if let Some(headers) = extra_headers {
+        for (k, v) in headers {
+            cmd.arg("-H").arg(format!("{k}: {v}"));
+        }
+    }
+
+    #[cfg(windows)]
+    crate::launcher::win_process::hide_console_window(&mut cmd);
+
+    let status = cmd
+        .status()
+        .await
+        .with_context(|| format!("failed to spawn reliable process curl for {url}"))?;
+
+    if !status.success() {
+        anyhow::bail!("reliable process exited with code {:?}", status.code());
+    }
+
+    if let Ok(meta) = tokio::fs::metadata(dest).await {
+        if let Some(m) = meter {
+            m.add(meta.len());
+            m.finish();
+        }
+    }
+
+    Ok(())
+}
+
 /// GET [url] into memory, using parallel ranges when the object is large.
 pub async fn get_bytes(
+    client: &Client,
+    url: &str,
+    extra_headers: Option<&[(&str, &str)]>,
+    on_bytes: Option<BytesProgressFn>,
+) -> Result<Vec<u8>> {
+    let result = get_bytes_inner(client, url, extra_headers, on_bytes.clone()).await;
+    match result {
+        Ok(b) => Ok(b),
+        Err(err) => {
+            let err_str = err.to_string();
+            let is_stalled_or_timeout = err_str.contains("下载停滞")
+                || err_str.contains("timeout")
+                || err_str.contains("timed out")
+                || err_str.contains("connection closed");
+
+            if is_stalled_or_timeout {
+                tracing::warn!(url, "Memory download stalled or timed out ({err_str}). Transferring entirely to reliable system process.");
+                let temp_dir = std::env::temp_dir();
+                let random_suffix = rand::random::<u64>();
+                let tmp_file = temp_dir.join(format!("aml_reliable_{random_suffix}.tmp"));
+                let meter = ByteMeter::new(None, on_bytes);
+                let p_res = download_via_reliable_process(url, &tmp_file, extra_headers, Some(&meter)).await;
+                match p_res {
+                    Ok(()) => {
+                        let bytes = tokio::fs::read(&tmp_file).await?;
+                        let _ = tokio::fs::remove_file(&tmp_file).await;
+                        Ok(bytes)
+                    }
+                    Err(p_err) => {
+                        let _ = tokio::fs::remove_file(&tmp_file).await;
+                        Err(anyhow!("both internal HTTP ({err:#}) and reliable process ({p_err:#}) failed"))
+                    }
+                }
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+async fn get_bytes_inner(
     client: &Client,
     url: &str,
     extra_headers: Option<&[(&str, &str)]>,
@@ -144,8 +250,40 @@ pub async fn get_to_path(
     }
     let tmp = part_path(dest);
     let _ = tokio::fs::remove_file(&tmp).await;
-    let result = get_to_path_inner(client, url, &tmp, extra_headers, on_bytes).await;
-    match result {
+    let result = get_to_path_inner(client, url, &tmp, extra_headers, on_bytes.clone()).await;
+
+    // 当内部 reqwest / Range 分块下载停滞或超时，全量转移给可靠进程执行
+    let final_res = match result {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let err_str = err.to_string();
+            let is_stalled_or_timeout = err_str.contains("下载停滞")
+                || err_str.contains("timeout")
+                || err_str.contains("timed out")
+                || err_str.contains("connection closed");
+
+            if is_stalled_or_timeout {
+                tracing::warn!(
+                    url,
+                    dest = %dest.display(),
+                    "Internal HTTP download stalled or timed out ({err_str}). Transferring entirely to reliable system process."
+                );
+                let meter = ByteMeter::new(None, on_bytes.clone());
+                match download_via_reliable_process(url, &tmp, extra_headers, Some(&meter)).await {
+                    Ok(()) => Ok(()),
+                    Err(p_err) => {
+                        let _ = tokio::fs::remove_file(&tmp).await;
+                        Err(anyhow!("both internal HTTP ({err:#}) and reliable process ({p_err:#}) failed"))
+                    }
+                }
+            } else {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                Err(err)
+            }
+        }
+    };
+
+    match final_res {
         Ok(()) => {
             if let Some(expected) = expected_sha1.map(str::trim).filter(|s| !s.is_empty()) {
                 let actual = sha1_file(&tmp).await?;

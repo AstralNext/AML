@@ -804,7 +804,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
                       final project = projects[index];
                       final state = _installState(project);
                       return Padding(
-                        key: ValueKey(project.id),
+                        key: ValueKey('${project.id}_$index'),
                         padding: const EdgeInsets.only(bottom: 12),
                         child: AppCard(
                           title: project.title,
