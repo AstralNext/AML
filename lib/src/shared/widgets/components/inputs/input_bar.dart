@@ -97,15 +97,15 @@ class _InputBarWidgetState extends State<InputBarWidget> {
         hintText = widget.hintText ?? '输入内容';
         break;
       case InputBarSize.medium:
-        height = 35;
-        iconSize = 20;
-        fontSize = 16;
+        height = 38;
+        iconSize = 18;
+        fontSize = 15;
         contentPadding = const EdgeInsets.symmetric(horizontal: 12);
         hintText = widget.hintText ?? '请输入';
         break;
       case InputBarSize.small:
-        height = 20;
-        iconSize = 16;
+        height = 24;
+        iconSize = 14;
         fontSize = 12;
         contentPadding = const EdgeInsets.symmetric(horizontal: 8);
         hintText = widget.hintText ?? '填';
@@ -129,7 +129,7 @@ class _InputBarWidgetState extends State<InputBarWidget> {
             color: _isFocused
                 ? tokens.colorBrand.withValues(alpha: 0.4)
                 : Colors.transparent,
-            width: 4,
+            width: 2,
           ),
         ),
         child: Center(
@@ -139,6 +139,7 @@ class _InputBarWidgetState extends State<InputBarWidget> {
             onChanged: widget.onChanged,
             onSubmitted: widget.onSubmitted,
             textAlign: TextAlign.left,
+            textAlignVertical: multiline ? TextAlignVertical.top : TextAlignVertical.center,
             obscureText: widget.obscureText,
             minLines: multiline ? widget.minLines : null,
             maxLines: multiline ? widget.maxLines : 1,
@@ -146,26 +147,61 @@ class _InputBarWidgetState extends State<InputBarWidget> {
                 multiline ? TextInputAction.newline : TextInputAction.done,
             decoration: InputDecoration(
               hintText: hintText,
+              hintStyle: TextStyle(
+                color: tokens.colorBase.withValues(alpha: 0.5),
+                fontSize: fontSize,
+              ),
               prefixIcon: widget.prefixIcon != null
-                  ? IconTheme(
-                      data: IconThemeData(
-                        size: iconSize,
-                        color: tokens.colorBase,
+                  ? Padding(
+                      padding: const EdgeInsets.only(left: 10, right: 6),
+                      child: IconTheme(
+                        data: IconThemeData(
+                          size: iconSize,
+                          color: tokens.colorBase.withValues(alpha: 0.7),
+                        ),
+                        child: widget.prefixIcon!,
                       ),
-                      child: widget.prefixIcon!,
+                    )
+                  : null,
+              prefixIconConstraints: widget.prefixIcon != null
+                  ? BoxConstraints(
+                      minWidth: iconSize + 16,
+                      maxWidth: iconSize + 16,
+                      minHeight: height - 4,
+                      maxHeight: height - 4,
                     )
                   : null,
               suffixIcon: widget.tailIcon != null
                   ? GestureDetector(
                       onTap: widget.tailIconOnTap,
-                      child: IconTheme(
-                        data: IconThemeData(size: iconSize),
-                        child: widget.tailIcon!,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: IconTheme(
+                          data: IconThemeData(
+                            size: iconSize,
+                            color: tokens.colorBase.withValues(alpha: 0.7),
+                          ),
+                          child: widget.tailIcon!,
+                        ),
                       ),
                     )
                   : null,
+              suffixIconConstraints: widget.tailIcon != null
+                  ? BoxConstraints(
+                      minWidth: iconSize + 16,
+                      maxWidth: iconSize + 16,
+                      minHeight: height - 4,
+                      maxHeight: height - 4,
+                    )
+                  : null,
               border: InputBorder.none,
-              contentPadding: contentPadding,
+              contentPadding: multiline
+                  ? contentPadding
+                  : EdgeInsets.only(
+                      left: widget.prefixIcon != null ? 0 : 12,
+                      right: widget.tailIcon != null ? 0 : 12,
+                      bottom: 1.5,
+                    ),
               isDense: true,
             ),
             style: TextStyle(

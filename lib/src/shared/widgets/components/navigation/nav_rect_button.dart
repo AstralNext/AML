@@ -367,29 +367,17 @@ class _NavRectButtonState extends State<NavRectButton>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (widget.icon != null)
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 100),
-                        child: Icon(
-                          widget.icon,
-                          key: ValueKey(
-                            'icon_${widget.icon?.codePoint}_${widget.text ?? widget.label ?? ''}_${currentTextColor.toString()}',
-                          ),
-                          size: 20,
-                          color: currentTextColor,
-                        ),
+                      Icon(
+                        widget.icon,
+                        size: 20,
+                        color: currentTextColor,
                       ),
                     if (widget.image != null)
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 100),
-                        child: Image(
-                          key: ValueKey(
-                            'image_${widget.image.hashCode}_${widget.text ?? widget.label ?? ''}_${currentTextColor.toString()}',
-                          ),
-                          image: widget.image!,
-                          width: 20,
-                          height: 20,
-                          color: currentTextColor,
-                        ),
+                      Image(
+                        image: widget.image!,
+                        width: 20,
+                        height: 20,
+                        color: currentTextColor,
                       ),
                     if (widget.text != null) ...[
                       if (widget.icon != null || widget.image != null)

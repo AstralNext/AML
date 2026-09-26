@@ -2,6 +2,7 @@ import 'package:aml/src/shared/theme/app_theme_tokens.dart';
 import 'package:aml/src/shared/widgets/components/buttons/custom_button.dart';
 import 'package:aml/src/shared/widgets/components/dialogs/create_instance_controller.dart';
 import 'package:aml/src/shared/widgets/components/dialogs/create_instance_custom_stage.dart';
+import 'package:aml/src/shared/widgets/components/dialogs/create_instance_external_stage.dart';
 import 'package:aml/src/shared/widgets/components/dialogs/create_instance_import_preview_stage.dart';
 import 'package:aml/src/shared/widgets/components/dialogs/create_instance_modpack_stage.dart';
 import 'package:aml/src/shared/widgets/components/dialogs/create_instance_type_stage.dart';
@@ -122,6 +123,12 @@ class _CreateInstanceContentState extends State<CreateInstanceContent> {
         );
       case CreateInstanceStage.importPreview:
         return CreateInstanceImportPreviewStage(
+          tokens: tokens,
+          controller: _controller,
+          colorScheme: widget.colorScheme,
+        );
+      case CreateInstanceStage.externalImport:
+        return CreateInstanceExternalStage(
           tokens: tokens,
           controller: _controller,
           colorScheme: widget.colorScheme,

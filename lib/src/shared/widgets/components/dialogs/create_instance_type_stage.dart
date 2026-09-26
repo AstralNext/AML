@@ -44,6 +44,14 @@ class CreateInstanceTypeStage extends StatelessWidget {
             description: '在 Modrinth 上浏览整合包或从文件中导入一个。',
             onTap: controller.selectModpackType,
           ),
+          const SizedBox(height: 12),
+          CreateInstanceTypeOption(
+            tokens: tokens,
+            icon: Icons.drive_folder_upload_outlined,
+            title: '从 .minecraft 文件夹导入',
+            description: '全盘搜索或选择现有 .minecraft 目录，一键转换并完全沙盒隔离。',
+            onTap: controller.selectExternalImportType,
+          ),
           const SizedBox(height: 20),
           Text(
             '实例是带有特定加载器、游戏版本和模组的一套 Minecraft 配置。',

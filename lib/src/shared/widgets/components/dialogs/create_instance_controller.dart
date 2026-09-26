@@ -3,12 +3,13 @@ import 'dart:async';
 import 'package:aml/src/app/di/service_locator.dart';
 import 'package:aml/src/app/state/navigation_state.dart';
 import 'package:aml/src/features/instances/application/instance_store.dart';
+import 'package:aml/src/features/instances/application/dot_minecraft_import_service.dart';
 import 'package:aml/src/rust/api/launcher.dart' as rust;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show TextEditingController;
 
-enum CreateInstanceStage { type, custom, modpack, importPreview }
+enum CreateInstanceStage { type, custom, modpack, importPreview, externalImport }
 
 class CreateInstanceController extends ChangeNotifier {
   CreateInstanceController({this.onCreated, required this.onClose});
@@ -20,6 +21,18 @@ class CreateInstanceController extends ChangeNotifier {
 
   final nameController = TextEditingController(text: '新实例');
   final importNameController = TextEditingController();
+  final externalPathController = TextEditingController();
+
+  List<DotMinecraftGame> externalGames = [];
+  final Set<String> selectedExternalGameIds = {};
+  bool scanningExternal = false;
+  bool importingExternal = false;
+  double importProgress = 0.0;
+  String importStatusText = '';
+
+  List<String> discoveredDiskPaths = [];
+  bool isSearchingDisks = false;
+  StreamSubscription<String>? _diskSearchSubscription;
 
   List<rust.GameVersionDto> allVersions = [];
   List<rust.LoaderVersionDto> loaderVersions = [];
@@ -103,8 +116,10 @@ class CreateInstanceController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _diskSearchSubscription?.cancel();
     nameController.dispose();
     importNameController.dispose();
+    externalPathController.dispose();
     super.dispose();
   }
 
@@ -372,4 +387,163 @@ class CreateInstanceController extends ChangeNotifier {
     onClose();
     getIt<NavigationState>().browseModpacks();
   }
+
+  void selectExternalImportType() {
+    error = null;
+    stage = CreateInstanceStage.externalImport;
+    notifyListeners();
+
+    startDiskSearch();
+  }
+
+  void startDiskSearch() {
+    _diskSearchSubscription?.cancel();
+    discoveredDiskPaths = [];
+    isSearchingDisks = true;
+    notifyListeners();
+
+    _diskSearchSubscription = DotMinecraftImportService.searchDotMinecraftAcrossDisks()
+        .listen(
+      (path) {
+        if (!_disposed) {
+          if (!discoveredDiskPaths.contains(path)) {
+            discoveredDiskPaths.add(path);
+            if (externalPathController.text.trim().isEmpty) {
+              externalPathController.text = path;
+              scanExternalPath(path);
+            }
+            notifyListeners();
+          }
+        }
+      },
+      onError: (e) {
+        debugPrint('[CreateInstanceController] 全盘搜索异常: $e');
+      },
+      onDone: () {
+        if (!_disposed) {
+          isSearchingDisks = false;
+          notifyListeners();
+        }
+      },
+      cancelOnError: false,
+    );
+  }
+
+  void backFromExternalImportStage() {
+    error = null;
+    stage = CreateInstanceStage.type;
+    notifyListeners();
+  }
+
+  Future<void> pickExternalDirectory() async {
+    try {
+      final selected = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择 .minecraft 游戏根目录或版本目录',
+      );
+      if (selected != null && selected.isNotEmpty) {
+        externalPathController.text = selected;
+        await scanExternalPath(selected);
+      }
+    } catch (e) {
+      error = '选择目录失败: $e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> scanExternalPath([String? path]) async {
+    final target = path ?? externalPathController.text.trim();
+    if (target.isEmpty) return;
+
+    scanningExternal = true;
+    error = null;
+    externalGames = [];
+    selectedExternalGameIds.clear();
+    notifyListeners();
+
+    try {
+      final games = await DotMinecraftImportService.scanPath(target);
+      if (!_disposed) {
+        externalGames = games;
+        // 默认全选所有版本
+        selectedExternalGameIds.addAll(games.map((g) => g.id));
+        if (games.isEmpty) {
+          error = '未在指定目录中找到任何 Minecraft 游戏版本';
+        }
+      }
+    } catch (e) {
+      if (!_disposed) {
+        error = '扫描失败: $e';
+      }
+    } finally {
+      if (!_disposed) {
+        scanningExternal = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void toggleSelectExternalGame(String id) {
+    if (selectedExternalGameIds.contains(id)) {
+      selectedExternalGameIds.remove(id);
+    } else {
+      selectedExternalGameIds.add(id);
+    }
+    notifyListeners();
+  }
+
+  void toggleSelectAllExternalGames() {
+    if (selectedExternalGameIds.length == externalGames.length) {
+      selectedExternalGameIds.clear();
+    } else {
+      selectedExternalGameIds.addAll(externalGames.map((g) => g.id));
+    }
+    notifyListeners();
+  }
+
+  Future<void> confirmImportExternalGames() async {
+    if (importingExternal || selectedExternalGameIds.isEmpty) return;
+
+    final toImport = externalGames
+        .where((g) => selectedExternalGameIds.contains(g.id))
+        .toList();
+
+    importingExternal = true;
+    error = null;
+    importProgress = 0.0;
+    importStatusText = '准备导入…';
+    notifyListeners();
+
+    int successCount = 0;
+    try {
+      for (int i = 0; i < toImport.length; i++) {
+        final game = toImport[i];
+        final baseP = i / toImport.length;
+        final stepP = 1.0 / toImport.length;
+
+        await DotMinecraftImportService.importSingleGame(
+          game,
+          onProgress: (p, msg) {
+            if (!_disposed) {
+              importProgress = baseP + (stepP * p);
+              importStatusText = '[${i + 1}/${toImport.length}] ${game.name}: $msg';
+              notifyListeners();
+            }
+          },
+        );
+        successCount++;
+      }
+
+      if (_disposed) return;
+      await onCreated?.call();
+      await _store.refresh();
+      onClose();
+    } catch (e) {
+      if (!_disposed) {
+        error = '导入过程中出现异常: $e (已完成 $successCount 个)';
+        importingExternal = false;
+        notifyListeners();
+      }
+    }
+  }
 }
+
