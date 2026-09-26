@@ -50,8 +50,9 @@ class _CustomTooltipState extends State<CustomTooltip>
   void dispose() {
     _showTimer?.cancel();
     _removeTimer?.cancel();
-    _animationController.dispose();
     _overlayEntry?.remove();
+    _overlayEntry = null;
+    _animationController.dispose();
     super.dispose();
   }
 
@@ -74,11 +75,20 @@ class _CustomTooltipState extends State<CustomTooltip>
 
     // 延迟 0.3 秒后显示
     _showTimer = Timer(const Duration(milliseconds: 300), () {
-      if (_overlayEntry == null) {
-        _overlayEntry = _createOverlayEntry();
-        Overlay.of(context).insert(_overlayEntry!);
-        _animationController.forward();
+      // 页面可能已关闭/转场：State 卸载或 RenderObject 脱离树时直接放弃显示
+      if (!mounted || _overlayEntry != null) return;
+      final renderObject = context.findRenderObject();
+      if (renderObject is! RenderBox ||
+          !renderObject.attached ||
+          !renderObject.hasSize) {
+        return;
       }
+      final overlay = Overlay.maybeOf(context);
+      if (overlay == null) return;
+
+      _overlayEntry = _createOverlayEntry(renderObject);
+      overlay.insert(_overlayEntry!);
+      _animationController.forward();
     });
   }
 
@@ -86,17 +96,24 @@ class _CustomTooltipState extends State<CustomTooltip>
     _showTimer?.cancel();
     _removeTimer?.cancel();
 
-    if (_overlayEntry != null) {
-      // 渐隐动画
-      _animationController.reverse().then((_) {
-        _overlayEntry?.remove();
-        _overlayEntry = null;
-      });
+    final entry = _overlayEntry;
+    if (entry == null) return;
+
+    if (!mounted) {
+      entry.remove();
+      _overlayEntry = null;
+      return;
     }
+
+    // 渐隐动画
+    _animationController.reverse().then((_) {
+      if (!mounted) return;
+      entry.remove();
+      if (_overlayEntry == entry) _overlayEntry = null;
+    });
   }
 
-  OverlayEntry _createOverlayEntry() {
-    RenderBox renderBox = context.findRenderObject() as RenderBox;
+  OverlayEntry _createOverlayEntry(RenderBox renderBox) {
     var size = renderBox.size;
     var offset = renderBox.localToGlobal(Offset.zero);
 

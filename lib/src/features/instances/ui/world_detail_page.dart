@@ -8,9 +8,9 @@ import 'package:aml/src/features/accounts/ui/accounts_popup.dart';
 import 'package:aml/src/features/instances/application/instance_store.dart';
 import 'package:aml/src/features/instances/ui/world_backup_actions.dart';
 import 'package:aml/src/features/instances/ui/world_map_viewer.dart';
-import 'package:aml/src/features/settings/application/storage_usage_service.dart';
 import 'package:aml/src/rust/api/launcher.dart' as rust;
 import 'package:aml/src/shared/theme/app_theme_tokens.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
 import 'package:aml/src/shared/widgets/app_messenger.dart';
 import 'package:aml/src/shared/widgets/components/buttons/button_group_widget.dart';
@@ -363,7 +363,7 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
 
   String _formatSize(BigInt bytes) {
     final n = bytes.toInt();
-    return StorageUsageService.formatBytes(n < 0 ? 0 : n);
+    return formatBytes(n < 0 ? 0 : n);
   }
 
   String _kindLabel(String kind) =>
@@ -388,7 +388,27 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
+          _buildHeader(context, tokens, running),
+          _buildTabSwitcher(context, backupLabel),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child:
+                  _tab == 0 ? _buildMapTab(tokens) : _buildBackupPanel(tokens),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+
+  /// 顶部信息栏：返回按钮、世界标题与启动/刷新/备份等操作。
+  Widget _buildHeader(
+    BuildContext context,
+    AppThemeTokens tokens,
+    bool running,
+  ) {
+    return Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 16, 8),
             child: Row(
               children: [
@@ -475,8 +495,12 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
                 ),
               ],
             ),
-          ),
-          Padding(
+          );
+  }
+
+  /// 地图/备份页签切换按钮组。
+  Widget _buildTabSwitcher(BuildContext context, String backupLabel) {
+    return Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Align(
               alignment: Alignment.centerLeft,
@@ -498,17 +522,7 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
                 ],
               ),
             ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child:
-                  _tab == 0 ? _buildMapTab(tokens) : _buildBackupPanel(tokens),
-            ),
-          ),
-        ],
-      );
-    });
+          );
   }
 
   Widget _buildMapTab(AppThemeTokens tokens) {
@@ -548,7 +562,19 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          _buildBackupHeader(context, tokens),
+          const SizedBox(height: 8),
+          if (selected != null)
+            _buildSelectedBackupInfo(context, tokens, selected),
+          Expanded(child: _buildBackupList(tokens)),
+        ],
+      ),
+    );
+  }
+
+  /// 备份面板头部：标题说明与刷新按钮。
+  Widget _buildBackupHeader(BuildContext context, AppThemeTokens tokens) {
+    return Row(
             children: [
               Expanded(
                 child: Column(
@@ -583,10 +609,16 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 8),
-          if (selected != null)
-            Padding(
+          );
+  }
+
+  /// 当前选中备份的摘要与回溯/删除操作行。
+  Widget _buildSelectedBackupInfo(
+    BuildContext context,
+    AppThemeTokens tokens,
+    rust.WorldBackupDto selected,
+  ) {
+    return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
                 children: [
@@ -624,11 +656,7 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
                   ),
                 ],
               ),
-            ),
-          Expanded(child: _buildBackupList(tokens)),
-        ],
-      ),
-    );
+            );
   }
 
   Widget _buildBackupList(AppThemeTokens tokens) {
@@ -645,6 +673,19 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
       );
     }
     if (_backups.isEmpty) {
+      return _buildBackupEmpty(context, tokens);
+    }
+
+    return ListView.separated(
+      itemCount: _backups.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) =>
+          _buildBackupItem(context, tokens, _backups[index]),
+    );
+  }
+
+  /// 备份列表空态：引导创建第一份备份。
+  Widget _buildBackupEmpty(BuildContext context, AppThemeTokens tokens) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -675,16 +716,17 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
           ],
         ),
       );
-    }
+  }
 
-    return ListView.separated(
-      itemCount: _backups.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final backup = _backups[index];
-        final busy = _busyBackupPath == backup.path;
-        final selected = _selectedBackup?.path == backup.path;
-        return Material(
+  /// 单条备份卡片：图标、元信息与回溯操作。
+  Widget _buildBackupItem(
+    BuildContext context,
+    AppThemeTokens tokens,
+    rust.WorldBackupDto backup,
+  ) {
+    final busy = _busyBackupPath == backup.path;
+    final selected = _selectedBackup?.path == backup.path;
+    return Material(
           color: selected
               ? tokens.colorBrand.withValues(alpha: 0.12)
               : tokens.colorBg.withValues(alpha: 0.35),
@@ -768,8 +810,6 @@ class _WorldDetailPageState extends State<WorldDetailPage> {
             ),
           ),
         );
-      },
-    );
   }
 
   Widget _backupIcon(AppThemeTokens tokens, rust.WorldBackupDto backup) {

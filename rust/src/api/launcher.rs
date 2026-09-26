@@ -172,6 +172,9 @@ pub async fn create_instance(
     Ok(InstanceDto::from(instance))
 }
 
+// FFI boundary: FRB exposes each parameter as a named Dart argument, so an
+// options struct would only add mapping boilerplate on both sides.
+#[allow(clippy::too_many_arguments)]
 pub async fn update_instance(
     id: String,
     name: Option<String>,
@@ -245,6 +248,9 @@ pub async fn get_launch_defaults() -> Result<LaunchDefaultsDto, String> {
         .map_err(|e| e.to_string())
 }
 
+// FFI boundary: FRB exposes each parameter as a named Dart argument, so an
+// options struct would only add mapping boilerplate on both sides.
+#[allow(clippy::too_many_arguments)]
 pub async fn set_launch_defaults(
     memory_mb: i64,
     extra_jvm_args: Option<String>,
@@ -1039,7 +1045,7 @@ pub async fn poll_device_code(
             launcher::auth::DeviceCodePollResult::Success { account } => {
                 DeviceCodePollResultDto {
                     status: DeviceCodePollResultDto::STATUS_SUCCESS.to_string(),
-                    account: Some(AccountDto::from(account)),
+                    account: Some(AccountDto::from(*account)),
                     error: None,
                 }
             }
@@ -1660,6 +1666,9 @@ pub async fn create_instance_from_mmc_folder(
         })
 }
 
+// FFI boundary: FRB exposes each parameter as a named Dart argument, so an
+// options struct would only add mapping boilerplate on both sides.
+#[allow(clippy::too_many_arguments)]
 pub async fn export_instance_mrpack(
     instance_id: String,
     export_path: String,
@@ -1689,6 +1698,9 @@ pub async fn export_instance_mrpack(
 /// `include_ids` accepts category ids: mods / resourcepacks / shaderpacks /
 /// datapacks / config / options / saves. Empty/None → defaults (no saves).
 /// `include_paths` optionally restricts to specific relative file paths.
+// FFI boundary: FRB exposes each parameter as a named Dart argument, so an
+// options struct would only add mapping boilerplate on both sides.
+#[allow(clippy::too_many_arguments)]
 pub async fn export_instance_pack(
     instance_id: String,
     export_path: String,
@@ -1701,22 +1713,20 @@ pub async fn export_instance_pack(
     on_progress: impl Fn(f64, String) -> DartFnFuture<()> + Send + Sync + 'static,
 ) -> Result<(), String> {
     let cb = progress_cb(on_progress);
-    launcher::pack::export_instance_pack(
-        &instance_id,
-        &export_path,
-        &format,
+    let options = launcher::pack::PackExportOptions::from_selection(
         pack_name,
         version_id,
         description,
         include_ids,
         include_paths,
         Some(cb),
-    )
-    .await
-    .map_err(|e| {
-        eprintln!("[AML] export_instance_pack({instance_id}, {format}): {e:#}");
-        format!("{e:#}")
-    })
+    );
+    launcher::pack::export_instance_pack(&instance_id, &export_path, &format, options)
+        .await
+        .map_err(|e| {
+            eprintln!("[AML] export_instance_pack({instance_id}, {format}): {e:#}");
+            format!("{e:#}")
+        })
 }
 
 /// Create a desktop shortcut that launches AML with an `aml://launch/…` argument.

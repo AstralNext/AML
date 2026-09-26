@@ -1,6 +1,7 @@
 import 'package:aml/src/features/discover/data/cache_service.dart';
 import 'package:aml/src/features/discover/data/curseforge_api.dart';
 import 'package:aml/src/features/discover/data/discover_ids.dart';
+import 'package:aml/src/features/discover/data/discover_translation.dart';
 import 'package:aml/src/features/discover/data/mcim_api.dart';
 import 'package:aml/src/features/discover/domain/discover_repository.dart';
 import 'package:flutter/foundation.dart';
@@ -70,7 +71,8 @@ class CurseForgeRepository implements DiscoverRepository {
       cacheDuration: _searchTtl,
     );
 
-    final projects = result.data.map((m) {
+    final mods = result.data;
+    var projects = mods.map((m) {
       return Project(
         id: curseForgeProjectId(m.id),
         title: m.name,
@@ -90,6 +92,36 @@ class CurseForgeRepository implements DiscoverRepository {
         dateModified: m.dateModified,
       );
     }).toList();
+
+    // 简介走 Rust 统一编排：本地缓存命中直返，缺失批量拉 MCIM 并回写。
+    if (DiscoverTranslation.descriptionEnabled && mods.isNotEmpty) {
+      try {
+        final localized =
+            await DiscoverTranslation.localizeProjects(
+          platform: DiscoverTranslation.platformCurseforge,
+          projects: [
+            for (final m in mods)
+              (
+                id: '${m.id}',
+                slug: m.slug.isNotEmpty ? m.slug : null,
+                title: m.name,
+                description: m.summary,
+              ),
+          ],
+        );
+        if (localized.isNotEmpty) {
+          projects = projects.map((p) {
+            final cfId = parseCurseForgeModId(p.id);
+            final zh = cfId != null ? localized['$cfId']?.description : null;
+            return zh != null && zh != p.description
+                ? p.copyWith(description: zh)
+                : p;
+          }).toList();
+        }
+      } catch (e) {
+        debugPrint('[Discover/CF] localize summaries failed: $e');
+      }
+    }
 
     final out = SearchResult(
       projects: projects,

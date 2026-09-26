@@ -25,7 +25,6 @@ struct CfApiEnvelope<T> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CfModInfo {
-    id: u64,
     name: String,
     #[serde(default)]
     logo: Option<CfLogo>,
@@ -51,9 +50,6 @@ struct CfAuthor {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CfFileInfo {
-    id: u64,
-    #[serde(default)]
-    mod_id: Option<u64>,
     file_name: String,
     #[serde(default)]
     display_name: Option<String>,

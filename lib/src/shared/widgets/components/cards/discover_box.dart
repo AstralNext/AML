@@ -3,6 +3,7 @@ import 'package:aml/src/app/state/navigation_state.dart';
 import 'package:aml/src/features/discover/data/modrinth_api.dart';
 import 'package:aml/src/features/discover/ui/browse_filters.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/widgets/components/cached_remote_image.dart';
 import 'package:flutter/material.dart';
 
@@ -154,7 +155,7 @@ class DiscoverBox extends StatelessWidget {
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          ModrinthApiService.formatDownloadCount(
+                          formatDownloadCount(
                             result.downloads,
                           ),
                           style: TextStyle(
@@ -171,7 +172,7 @@ class DiscoverBox extends StatelessWidget {
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          ModrinthApiService.formatDownloadCount(
+                          formatDownloadCount(
                             result.follows,
                           ),
                           style: TextStyle(

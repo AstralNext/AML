@@ -67,7 +67,6 @@ struct ZipSource {
     label: String,
     kind: String,
     path: PathBuf,
-    priority: i32,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -326,7 +325,6 @@ fn scan_blocking(
             label: format!("游戏本体 · {_game_version}"),
             kind: "vanilla".into(),
             path: client_jar.to_path_buf(),
-            priority: 0,
         });
     }
 
@@ -350,7 +348,6 @@ fn scan_blocking(
                 label: format!("Mod · {name}"),
                 kind: "mod".into(),
                 path,
-                priority: 10,
             });
         }
     }
@@ -372,7 +369,6 @@ fn scan_blocking(
                 label: format!("资源包 · {name}"),
                 kind: "resourcepack".into(),
                 path,
-                priority: 20,
             });
         }
     }
@@ -529,21 +525,21 @@ fn resolve_blocking(
         .or_else(|_| load_asset_index(resource_dir, game_version))
         .ok();
 
+    let ctx = ResolveCtx {
+        archives: &archives,
+        namespace: &entry.namespace,
+        asset_index: asset_index.as_ref(),
+        resource_dir,
+        texture_cache_dir,
+        entry_id: &entry.id,
+    };
+
     if let Some(model_path) = &entry.model_path {
         let model_json = archives
             .read_text(model_path)
             .with_context(|| format!("读取模型失败: {model_path}"))?;
         let default_texture = entry.texture_path.as_deref();
-        let resolved = resolve_model_json(
-            &archives,
-            &entry.namespace,
-            &model_json,
-            default_texture,
-            asset_index.as_ref(),
-            resource_dir,
-            texture_cache_dir,
-            &entry.id,
-        )?;
+        let resolved = resolve_model_json(&ctx, &model_json, default_texture)?;
         return Ok(ResolvedAssetPreview {
             entry_id: entry.id.clone(),
             preview_kind: resolved.preview_kind,
@@ -555,16 +551,7 @@ fn resolve_blocking(
     }
 
     if let Some(texture_path) = entry.texture_path.as_ref() {
-        let png = read_texture_bytes(
-            &archives,
-            texture_path,
-            &entry.namespace,
-            asset_index.as_ref(),
-            resource_dir,
-            texture_cache_dir,
-            &entry.id,
-            "all",
-        )?;
+        let png = read_texture_bytes(&ctx, texture_path, "all")?;
         let elements = flat_item_element();
         return Ok(ResolvedAssetPreview {
             entry_id: entry.id.clone(),
@@ -600,15 +587,27 @@ struct ResolvedModelInternal {
     gui_scale: Option<f64>,
 }
 
+/// Immutable environment shared while resolving one preview entry.
+struct ResolveCtx<'a> {
+    archives: &'a AssetArchives<'a>,
+    namespace: &'a str,
+    asset_index: Option<&'a AssetsIndex>,
+    resource_dir: &'a str,
+    texture_cache_dir: &'a Path,
+    entry_id: &'a str,
+}
+
+/// Deduplicating PNG table shared across all elements of one model.
+#[derive(Default)]
+struct TextureAccumulator {
+    bytes: Vec<Vec<u8>>,
+    index: HashMap<String, usize>,
+}
+
 fn resolve_model_json(
-    archives: &AssetArchives<'_>,
-    namespace: &str,
+    ctx: &ResolveCtx<'_>,
     model_json: &str,
     default_texture_path: Option<&str>,
-    asset_index: Option<&AssetsIndex>,
-    resource_dir: &str,
-    texture_cache_dir: &Path,
-    entry_id: &str,
 ) -> Result<ResolvedModelInternal> {
     let root: serde_json::Value = serde_json::from_str(model_json)?;
     let parent_name = root
@@ -628,11 +627,17 @@ fn resolve_model_json(
         if let Some(path) = default_texture_path {
             let tex_ref = path
                 .strip_prefix("assets/")
-                .and_then(|p| p.strip_prefix(&format!("{namespace}/textures/")))
+                .and_then(|p| p.strip_prefix(&format!("{}/textures/", ctx.namespace)))
                 .map(|p| p.trim_end_matches(".png"))
                 .unwrap_or("item/unknown");
-            textures_map.insert("layer0".into(), format!("{namespace}:{tex_ref}"));
-            textures_map.insert("all".into(), format!("{namespace}:{tex_ref}"));
+            textures_map.insert(
+                "layer0".into(),
+                format!("{}:{tex_ref}", ctx.namespace),
+            );
+            textures_map.insert(
+                "all".into(),
+                format!("{}:{tex_ref}", ctx.namespace),
+            );
         }
     }
 
@@ -667,8 +672,7 @@ fn resolve_model_json(
         }
         if elements.is_empty() {
             inherit_parent_model(
-                archives,
-                namespace,
+                ctx,
                 parent,
                 &mut textures_map,
                 &mut elements,
@@ -700,34 +704,21 @@ fn resolve_model_json(
         }
     }
 
-    let mut texture_bytes: Vec<Vec<u8>> = Vec::new();
-    let mut texture_index_map: HashMap<String, usize> = HashMap::new();
+    let mut acc = TextureAccumulator::default();
 
-    let parsed_elements = parse_elements(
-        &elements,
-        &textures_map,
-        archives,
-        namespace,
-        asset_index,
-        resource_dir,
-        texture_cache_dir,
-        entry_id,
-        &mut texture_bytes,
-        &mut texture_index_map,
-    )?;
+    let parsed_elements = parse_elements(&elements, &textures_map, ctx, &mut acc)?;
 
     Ok(ResolvedModelInternal {
         preview_kind,
         elements: parsed_elements,
-        textures: texture_bytes,
+        textures: acc.bytes,
         gui_rotation,
         gui_scale,
     })
 }
 
 fn inherit_parent_model(
-    archives: &AssetArchives<'_>,
-    namespace: &str,
+    ctx: &ResolveCtx<'_>,
     parent: &str,
     textures_map: &mut HashMap<String, String>,
     elements: &mut Vec<serde_json::Value>,
@@ -741,7 +732,8 @@ fn inherit_parent_model(
 
     for parent_ref in chain {
         let parent_path = parent_to_asset_path(&parent_ref);
-        let json = archives
+        let json = ctx
+            .archives
             .read_text(&parent_path)
             .or_else(|_| read_builtin_parent_json(&parent_ref))?;
         let value: serde_json::Value = serde_json::from_str(&json)?;
@@ -751,7 +743,7 @@ fn inherit_parent_model(
                 if let Some(s) = v.as_str() {
                     textures_map
                         .entry(k.clone())
-                        .or_insert_with(|| resolve_texture_ref(s, namespace));
+                        .or_insert_with(|| resolve_texture_ref(s, ctx.namespace));
                 }
             }
         }
@@ -836,14 +828,8 @@ fn resolve_texture_ref(reference: &str, namespace: &str) -> String {
 fn parse_elements(
     elements: &[serde_json::Value],
     textures_map: &HashMap<String, String>,
-    archives: &AssetArchives<'_>,
-    namespace: &str,
-    asset_index: Option<&AssetsIndex>,
-    resource_dir: &str,
-    texture_cache_dir: &Path,
-    entry_id: &str,
-    texture_bytes: &mut Vec<Vec<u8>>,
-    texture_index_map: &mut HashMap<String, usize>,
+    ctx: &ResolveCtx<'_>,
+    acc: &mut TextureAccumulator,
 ) -> Result<Vec<ModelElement>> {
     let mut out = Vec::new();
     for element in elements {
@@ -856,18 +842,8 @@ fn parse_elements(
                     .get("texture")
                     .and_then(|v| v.as_str())
                     .unwrap_or("#all");
-                let resolved_ref = resolve_face_texture(texture_key, textures_map, namespace);
-                let tex_idx = load_texture_index(
-                    &resolved_ref,
-                    archives,
-                    namespace,
-                    asset_index,
-                    resource_dir,
-                    texture_cache_dir,
-                    entry_id,
-                    texture_bytes,
-                    texture_index_map,
-                )?;
+                let resolved_ref = resolve_face_texture(texture_key, textures_map, ctx.namespace);
+                let tex_idx = load_texture_index(&resolved_ref, ctx, acc)?;
                 let uv = face
                     .get("uv")
                     .and_then(|v| v.as_array())
@@ -902,8 +878,7 @@ fn resolve_face_texture(
     textures_map: &HashMap<String, String>,
     namespace: &str,
 ) -> String {
-    if key.starts_with('#') {
-        let var_name = &key[1..];
+    if let Some(var_name) = key.strip_prefix('#') {
         if let Some(resolved) = textures_map.get(var_name) {
             return resolve_texture_ref(resolved, namespace);
         }
@@ -913,90 +888,55 @@ fn resolve_face_texture(
 
 fn load_texture_index(
     texture_ref: &str,
-    archives: &AssetArchives<'_>,
-    namespace: &str,
-    asset_index: Option<&AssetsIndex>,
-    resource_dir: &str,
-    texture_cache_dir: &Path,
-    entry_id: &str,
-    texture_bytes: &mut Vec<Vec<u8>>,
-    texture_index_map: &mut HashMap<String, usize>,
+    ctx: &ResolveCtx<'_>,
+    acc: &mut TextureAccumulator,
 ) -> Result<usize> {
-    let key = texture_ref.to_string();
-    if let Some(&idx) = texture_index_map.get(&key) {
+    if let Some(&idx) = acc.index.get(texture_ref) {
         return Ok(idx);
     }
-    let png = read_texture_by_ref(
-        texture_ref,
-        archives,
-        namespace,
-        asset_index,
-        resource_dir,
-        texture_cache_dir,
-        entry_id,
-    )?;
-    let idx = texture_bytes.len();
-    texture_bytes.push(png);
-    texture_index_map.insert(key, idx);
+    let png = read_texture_by_ref(texture_ref, ctx)?;
+    let idx = acc.bytes.len();
+    acc.bytes.push(png);
+    acc.index.insert(texture_ref.to_string(), idx);
     Ok(idx)
 }
 
-fn read_texture_by_ref(
-    texture_ref: &str,
-    archives: &AssetArchives<'_>,
-    fallback_namespace: &str,
-    asset_index: Option<&AssetsIndex>,
-    resource_dir: &str,
-    texture_cache_dir: &Path,
-    entry_id: &str,
-) -> Result<Vec<u8>> {
+fn read_texture_by_ref(texture_ref: &str, ctx: &ResolveCtx<'_>) -> Result<Vec<u8>> {
     let (ns, path) = if let Some((a, b)) = texture_ref.split_once(':') {
         (a.to_string(), b.to_string())
     } else {
-        (fallback_namespace.to_string(), texture_ref.to_string())
+        (ctx.namespace.to_string(), texture_ref.to_string())
     };
     let asset_path = format!("assets/{ns}/textures/{path}.png");
-    read_texture_bytes(
-        archives,
-        &asset_path,
-        &ns,
-        asset_index,
-        resource_dir,
-        texture_cache_dir,
-        entry_id,
-        &path,
-    )
+    read_texture_bytes(ctx, &asset_path, &path)
 }
 
 fn read_texture_bytes(
-    archives: &AssetArchives<'_>,
+    ctx: &ResolveCtx<'_>,
     asset_path: &str,
-    namespace: &str,
-    asset_index: Option<&AssetsIndex>,
-    resource_dir: &str,
-    texture_cache_dir: &Path,
-    entry_id: &str,
     cache_suffix: &str,
 ) -> Result<Vec<u8>> {
-    let cache_key = format!("{entry_id}_{cache_suffix}");
-    let cache_file = texture_cache_dir.join(format!("{cache_key}.png"));
+    let cache_key = format!("{}_{cache_suffix}", ctx.entry_id);
+    let cache_file = ctx
+        .texture_cache_dir
+        .join(format!("{cache_key}.png"));
     if cache_file.exists() {
         return Ok(std::fs::read(&cache_file)?);
     }
 
-    if let Ok(bytes) = archives.read_bytes(asset_path) {
+    if let Ok(bytes) = ctx.archives.read_bytes(asset_path) {
         std::fs::write(&cache_file, &bytes).ok();
         return Ok(bytes);
     }
 
-    if let Some(index) = asset_index {
+    if let Some(index) = ctx.asset_index {
         let index_key = asset_path
             .strip_prefix("assets/")
             .unwrap_or(asset_path)
             .to_string();
         if let Some(asset) = index.objects.get(&index_key) {
             let prefix = &asset.hash[..2.min(asset.hash.len())];
-            let object_path = dirs::assets(resource_dir)
+            let object_path = dirs::assets(ctx.resource_dir)
                 .join("objects")
                 .join(prefix)
                 .join(&asset.hash);
@@ -1014,7 +954,6 @@ fn read_texture_bytes(
         6, 0, 0, 0, 31, 243, 255, 97, 0, 0, 0, 10, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192,
         240, 31, 0, 4, 193, 1, 31, 210, 68, 205, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
-    let _ = namespace;
     Ok(placeholder)
 }
 

@@ -13,8 +13,6 @@ pub struct CustomSkinRow {
 #[derive(Debug, Clone)]
 pub struct SkinPreference {
     pub texture_key: String,
-    pub variant: String,
-    pub cape_id: Option<String>,
 }
 
 pub async fn list_custom_skins(pool: &SqlitePool, user_uuid: &str) -> Result<Vec<CustomSkinRow>> {
@@ -106,16 +104,12 @@ pub async fn get_skin_preference(
     pool: &SqlitePool,
     user_uuid: &str,
 ) -> Result<Option<SkinPreference>> {
-    let row = sqlx::query(
-        r#"SELECT texture_key, variant, cape_id FROM skin_preferences WHERE user_uuid = ?"#,
-    )
-    .bind(user_uuid)
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query(r#"SELECT texture_key FROM skin_preferences WHERE user_uuid = ?"#)
+        .bind(user_uuid)
+        .fetch_optional(pool)
+        .await?;
     Ok(row.map(|r| SkinPreference {
         texture_key: r.get("texture_key"),
-        variant: r.get("variant"),
-        cape_id: r.get("cape_id"),
     }))
 }
 

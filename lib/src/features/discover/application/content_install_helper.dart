@@ -80,6 +80,7 @@ class ContentInstallHelper {
       switchMode: true,
     );
     if (pick == null) return;
+    if (!context.mounted) return;
     try {
       if (isCf) {
         final modId = parseCurseForgeModId(
@@ -137,6 +138,7 @@ class ContentInstallHelper {
         } catch (_) {
           pickerVersions = null;
         }
+        if (!context.mounted) return;
       }
       final pick = await ModpackVersionPicker.show(
         context,

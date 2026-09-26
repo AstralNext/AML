@@ -1,5 +1,6 @@
 import 'package:aml/src/rust/api/launcher.dart' as rust;
 import 'package:aml/src/shared/theme/app_theme_tokens.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/widgets/components/cached_remote_image.dart';
 import 'package:aml/src/shared/widgets/components/dialogs/create_instance_controller.dart';
 import 'package:aml/src/shared/widgets/components/inputs/input_bar.dart';
@@ -128,7 +129,7 @@ class CreateInstanceImportPreviewStage extends StatelessWidget {
                                             ),
                                           ),
                                           Text(
-                                            '${cat.fileCount} 个文件 · ${_formatBytes(cat.totalBytes)}',
+                                            '${cat.fileCount} 个文件 · ${formatBytes(cat.totalBytes.toInt())}',
                                             style: TextStyle(
                                               fontSize: 12,
                                               color: tokens.colorBase
@@ -190,7 +191,7 @@ class CreateInstanceImportPreviewStage extends StatelessWidget {
                                                     ),
                                                   ),
                                                   Text(
-                                                    '${file.name} · ${_formatBytes(file.sizeBytes)}',
+                                                    '${file.name} · ${formatBytes(file.sizeBytes.toInt())}',
                                                     maxLines: 1,
                                                     overflow:
                                                         TextOverflow.ellipsis,
@@ -320,16 +321,6 @@ class CreateInstanceImportPreviewStage extends StatelessWidget {
       ),
     );
   }
-}
-
-String _formatBytes(BigInt bytes) {
-  final n = bytes.toDouble();
-  if (n < 1024) return '${n.toInt()} B';
-  if (n < 1024 * 1024) return '${(n / 1024).toStringAsFixed(1)} KB';
-  if (n < 1024 * 1024 * 1024) {
-    return '${(n / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-  return '${(n / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }
 
 IconData _packCategoryIcon(String id) {

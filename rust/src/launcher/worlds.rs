@@ -4,7 +4,6 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{TimeZone, Utc};
 use quartz_nbt::NbtCompound;
-use serde::Deserialize;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 

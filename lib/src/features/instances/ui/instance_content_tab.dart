@@ -171,7 +171,31 @@ class InstanceContentTabState extends State<InstanceContentTab> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
+        _buildContentSearchRow(context, tokens, filtered),
+        const SizedBox(height: 10),
+        _buildContentFilterRow(context, tokens),
+        const SizedBox(height: 8),
+        if (_contentLoading)
+          const Expanded(
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_mods.isEmpty)
+          _buildContentEmptyState(context, tokens)
+        else ...[
+          _buildContentListHeader(context, tokens),
+          _buildContentList(context, tokens, filtered),
+        ],
+      ],
+    );
+  }
+
+  /// 内容搜索行：关键词输入框与“浏览内容”按钮。
+  Widget _buildContentSearchRow(
+    BuildContext context,
+    tokens,
+    List<rust.ModFileDto> filtered,
+  ) {
+    return Row(
           children: [
             Expanded(
               child: TextField(
@@ -217,9 +241,12 @@ class InstanceContentTabState extends State<InstanceContentTab> {
               label: const Text('浏览内容'),
             ),
           ],
-        ),
-        const SizedBox(height: 10),
-        Row(
+        );
+  }
+
+  /// 内容筛选行：类型筛选 chips、批量操作与同步状态。
+  Widget _buildContentFilterRow(BuildContext context, tokens) {
+    return Row(
           children: [
             Icon(Icons.filter_list, size: 18, color: tokens.colorBase),
             const SizedBox(width: 8),
@@ -291,14 +318,12 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                   TextButton.styleFrom(foregroundColor: tokens.colorContrast),
             ),
           ],
-        ),
-        const SizedBox(height: 8),
-        if (_contentLoading)
-          const Expanded(
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (_mods.isEmpty)
-          Expanded(
+        );
+  }
+
+  /// 空态：实例还没有任何内容时的引导。
+  Widget _buildContentEmptyState(BuildContext context, tokens) {
+    return Expanded(
             child: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -330,9 +355,12 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                 ],
               ),
             ),
-          )
-        else ...[
-          Padding(
+          );
+  }
+
+  /// 内容列表表头：项目 / 版本 / 操作 三列标题。
+  Widget _buildContentListHeader(BuildContext context, tokens) {
+    return Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
             child: Row(
               children: [
@@ -369,8 +397,16 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                 ),
               ],
             ),
-          ),
-          Expanded(
+          );
+  }
+
+  /// 内容列表：筛选为空提示或滚动内容行。
+  Widget _buildContentList(
+    BuildContext context,
+    tokens,
+    List<rust.ModFileDto> filtered,
+  ) {
+    return Expanded(
             child: filtered.isEmpty
                 ? Center(
                     child: Text(
@@ -388,16 +424,16 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                         key: ValueKey(mod.relativePath),
                         child: InstanceContentRow(
                           tokens: tokens,
+                          instanceId: widget.instanceId,
                           mod: mod,
                           busy: _busy,
                           updatingContentPaths: _updatingContentPaths,
-                          onShowDetail: () =>
-                              showInstanceContentDetailSheet(
-                                context: context,
-                                mod: mod,
-                              ),
-                          onToggleEnabled: (v) =>
-                              _toggleContentEnabled(mod, v),
+                          onShowDetail: () => showInstanceContentDetailSheet(
+                            context: context,
+                            mod: mod,
+                            instanceId: widget.instanceId,
+                          ),
+                          onToggleEnabled: (v) => _toggleContentEnabled(mod, v),
                           onDownloadMissing: () => _downloadMissingContent(mod),
                           onUpdate: () => _updateContent(mod),
                           onSwitchVersion: () => _switchContentVersion(mod),
@@ -406,10 +442,7 @@ class InstanceContentTabState extends State<InstanceContentTab> {
                       );
                     },
                   ),
-          ),
-        ],
-      ],
-    );
+          );
   }
 
   Widget _filterChip(tokens, String id, String label) {

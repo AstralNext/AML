@@ -14,7 +14,6 @@ use super::detect::{read_zip_entry, zip_entry_prefix};
 pub struct CfPackMeta {
     pub name: String,
     pub version: Option<String>,
-    pub author: Option<String>,
     pub game_version: String,
     pub loader: ModLoader,
     pub loader_version: Option<String>,
@@ -36,7 +35,6 @@ pub struct CfFileRef {
 struct ManifestJson {
     name: Option<String>,
     version: Option<String>,
-    author: Option<String>,
     overrides: Option<String>,
     minecraft: ManifestMinecraft,
     files: Vec<ManifestFile>,
@@ -81,12 +79,8 @@ struct CfFilesResponse {
 #[serde(rename_all = "camelCase")]
 struct CfFileData {
     id: u64,
-    #[serde(alias = "modId")]
-    mod_id: Option<u64>,
     file_name: String,
     download_url: Option<String>,
-    #[serde(default)]
-    file_length: u64,
 }
 
 #[derive(Serialize)]
@@ -105,7 +99,6 @@ pub fn parse_manifest_json(text: &str) -> Result<CfPackMeta> {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "CurseForge Pack".into()),
         version: manifest.version,
-        author: manifest.author,
         game_version: manifest.minecraft.version,
         loader,
         loader_version,
@@ -128,7 +121,7 @@ pub fn parse_manifest_json(text: &str) -> Result<CfPackMeta> {
     })
 }
 
-pub fn parse_mod_loader(loaders: &[ManifestModLoader]) -> (ModLoader, Option<String>) {
+fn parse_mod_loader(loaders: &[ManifestModLoader]) -> (ModLoader, Option<String>) {
     let primary = loaders
         .iter()
         .find(|l| l.primary)

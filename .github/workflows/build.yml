@@ -29,13 +29,21 @@ jobs:
         include:
           - os: windows-latest
             target: windows
+            arch: x64
             artifact: windows-x64
           - os: ubuntu-22.04
             target: linux
+            arch: x64
             artifact: linux-x64
-          - os: macos-14
+          # flutter build macos --release 默认产出 universal 二进制
+          # （x86_64 + arm64）：Xcode Release 的 ARCHS_STANDARD 含双架构，
+          # cargokit 会自动安装缺失的 Rust target 交叉编译并 lipo 合并，
+          # 与 runner 宿主架构无关。一个任务即可同时覆盖 Intel / Apple Silicon。
+          # 注意：旧 macos-14 标签将于 2026-11 退役，故使用 macos-15。
+          - os: macos-15
             target: macos
-            artifact: macos-arm64
+            arch: universal
+            artifact: macos-universal
 
     steps:
       - name: Checkout
@@ -63,9 +71,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          key: cargo-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('rust/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-
+            cargo-${{ runner.os }}-${{ matrix.arch }}-
 
       - name: Linux dependencies
         if: matrix.target == 'linux'
@@ -158,6 +166,11 @@ jobs:
           OUT="aml-${{ matrix.artifact }}-${{ steps.ver.outputs.safe }}"
           APP=$(find build/macos -name '*.app' -type d | head -1)
           test -n "$APP"
+          # 校验确为 universal（x86_64 + arm64），防止默认架构行为变化后发出残缺包
+          BIN="$APP/Contents/MacOS/$(basename "$APP" .app)"
+          lipo -archs "$BIN" | tee /tmp/archs.txt
+          grep -q x86_64 /tmp/archs.txt
+          grep -q arm64 /tmp/archs.txt
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/${OUT}.zip"
           ls -lh "dist/${OUT}.zip"

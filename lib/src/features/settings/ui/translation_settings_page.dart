@@ -8,6 +8,7 @@ import 'package:aml/src/features/settings/ui/settings_screen.dart';
 import 'package:aml/src/features/settings/ui/settings_switch_row.dart';
 import 'package:aml/src/rust/api/project_i18n.dart' as i18n;
 import 'package:aml/src/shared/theme/app_theme_tokens.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
 import 'package:aml/src/shared/widgets/app_messenger.dart';
 import 'package:aml/src/shared/widgets/components/navigation/nav_rect_button.dart';
@@ -102,7 +103,9 @@ class _TranslationSettingsPageState extends State<TranslationSettingsPage> {
     return Padding(
       padding: const EdgeInsets.all(20),
       child: Watch((context) {
-        final translateBody = ui.translateDiscoverContent.watch(context);
+        final translateTitle = ui.translateTitle.watch(context);
+        final translateDescription = ui.translateDescription.watch(context);
+        final translateBody = ui.translateBody.watch(context);
         final mcdbSearch = ui.useMcdbSearch.watch(context);
         final db = _dbStats;
 
@@ -148,10 +151,10 @@ class _TranslationSettingsPageState extends State<TranslationSettingsPage> {
               ),
             ),
             const SizedBox(height: 24),
-            _sectionTitle(tokens, '详情页正文'),
+            _sectionTitle(tokens, '汉化范围'),
             const SizedBox(height: 8),
             Text(
-              '仅影响项目详情页的 HTML / Markdown 概述；列表标题不受此项控制。',
+              '标题来自 MCDB，简介来自 MCIM，正文走云翻译。可分别开关。',
               style: TextStyle(
                 fontSize: 12,
                 color: tokens.colorBase.withValues(alpha: 0.7),
@@ -160,14 +163,36 @@ class _TranslationSettingsPageState extends State<TranslationSettingsPage> {
             const SizedBox(height: 10),
             _card(
               tokens,
-              child: SettingsSwitchRow(
-                tokens: tokens,
-                title: '云翻译正文',
-                subtitle: translateBody
-                    ? '详情概述使用微软 Edge 公共翻译'
-                    : '详情正文保持英文原文',
-                value: translateBody,
-                onChanged: ui.setTranslateDiscoverContent,
+              child: Column(
+                children: [
+                  SettingsSwitchRow(
+                    tokens: tokens,
+                    title: '标题汉化',
+                    subtitle: translateTitle
+                        ? '列表与详情页标题显示 MCDB 中文译名'
+                        : '标题始终显示原文',
+                    value: translateTitle,
+                    onChanged: ui.setTranslateTitle,
+                  ),
+                  SettingsSwitchRow(
+                    tokens: tokens,
+                    title: '简介汉化',
+                    subtitle: translateDescription
+                        ? '详情页简介显示 MCIM 社区汉化'
+                        : '简介始终显示原文',
+                    value: translateDescription,
+                    onChanged: ui.setTranslateDescription,
+                  ),
+                  SettingsSwitchRow(
+                    tokens: tokens,
+                    title: '正文云翻译',
+                    subtitle: translateBody
+                        ? '详情页点击「译文」时使用微软 Edge 公共翻译'
+                        : '禁用云翻译，正文只能看原文',
+                    value: translateBody,
+                    onChanged: ui.setTranslateBody,
+                  ),
+                ],
               ),
             ),
             if (translateBody) ...[
@@ -235,7 +260,7 @@ class _TranslationSettingsPageState extends State<TranslationSettingsPage> {
                       tokens,
                       '磁盘正文缓存',
                       '${db?.textEntries.toInt() ?? 0} 条 · '
-                          '${StorageUsageService.formatBytes(db?.textBytes.toInt() ?? 0)}',
+                          '${formatBytes(db?.textBytes.toInt() ?? 0)}',
                     ),
                     _statRow(
                       tokens,

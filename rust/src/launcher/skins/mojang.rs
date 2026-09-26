@@ -7,7 +7,6 @@ use serde_json::json;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProfileSkin {
-    pub id: String,
     pub state: String,
     pub url: String,
     #[serde(rename = "textureKey", default)]
@@ -26,8 +25,6 @@ pub struct ProfileCape {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FullProfile {
-    pub id: String,
-    pub name: String,
     #[serde(default)]
     pub skins: Vec<ProfileSkin>,
     #[serde(default)]
@@ -36,7 +33,7 @@ pub struct FullProfile {
 
 pub async fn fetch_profile(access_token: &str) -> Result<FullProfile> {
     let client = crate::launcher::manifest::http_client()?;
-    Ok(client
+    client
         .get("https://api.minecraftservices.com/minecraft/profile")
         .bearer_auth(access_token)
         .header("Accept", "application/json")
@@ -45,7 +42,7 @@ pub async fn fetch_profile(access_token: &str) -> Result<FullProfile> {
         .error_for_status()?
         .json()
         .await
-        .context("parse minecraft profile")?)
+        .context("parse minecraft profile")
 }
 
 pub async fn equip_skin(
@@ -80,7 +77,7 @@ pub async fn equip_skin(
         .error_for_status()
         .context("equip skin")?;
 
-    Ok(resp.json().await.context("parse equip response")?)
+    resp.json().await.context("parse equip response")
 }
 
 pub async fn equip_cape(access_token: &str, cape_id: &str) -> Result<()> {

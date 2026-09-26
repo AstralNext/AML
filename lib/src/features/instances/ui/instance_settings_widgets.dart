@@ -67,8 +67,9 @@ Widget instanceSettingsOverrideRow(
       const SizedBox(height: 8),
       Opacity(
         opacity: value ? 1 : 0.45,
+        // 仅在开关关闭时屏蔽输入；保存期间不锁定，避免连续输入/拖动被打断。
         child: IgnorePointer(
-          ignoring: !value || saving,
+          ignoring: !value,
           child: child,
         ),
       ),

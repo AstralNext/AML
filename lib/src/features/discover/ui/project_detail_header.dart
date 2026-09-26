@@ -2,6 +2,7 @@ import 'package:aml/src/features/discover/data/modrinth_api.dart';
 import 'package:aml/src/features/discover/ui/browse_filters.dart';
 import 'package:aml/src/features/discover/ui/project_environment.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/widgets/components/buttons/custom_button.dart';
 import 'package:aml/src/shared/widgets/components/cached_remote_image.dart';
 import 'package:aml/src/shared/widgets/components/common/image_lightbox.dart';
@@ -242,11 +243,11 @@ class ProjectDetailHeader extends StatelessWidget {
                   children: [
                     metaPlain(
                       Icons.download_rounded,
-                      ModrinthApiService.formatDownloadCount(downloads),
+                      formatDownloadCount(downloads),
                     ),
                     metaPlain(
                       Icons.favorite_border_rounded,
-                      ModrinthApiService.formatDownloadCount(followers),
+                      formatDownloadCount(followers),
                     ),
                     Text(
                       categoryLabel.isNotEmpty

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:aml/src/rust/api/launcher.dart' as rust;
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/utils/reveal_in_explorer.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -102,14 +103,6 @@ class _InstanceFilesTabState extends State<InstanceFilesTab> {
         _filesLoading = false;
       });
     }
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    }
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   @override
@@ -217,7 +210,7 @@ class _InstanceFilesTabState extends State<InstanceFilesTab> {
                               ),
                             ),
                             subtitle: Text(
-                              e.isDirectory ? '文件夹' : _formatBytes(e.size),
+                              e.isDirectory ? '文件夹' : formatBytes(e.size),
                               style: TextStyle(
                                 color: tokens.colorBase.withValues(alpha: 0.65),
                               ),

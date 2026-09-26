@@ -65,11 +65,6 @@ pub async fn install_instance(
     }
 
     let java_arch = std::env::consts::ARCH;
-    let java_arch = match java_arch {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => other,
-    };
 
     report(0.08, "Downloading Minecraft files…".into());
     if force {
@@ -123,21 +118,28 @@ pub async fn run_processors(
     let libraries = dirs::libraries(resource_dir);
     let client_jar = download::client_jar_path(resource_dir, version_jar_id);
 
-    let mut data_map: HashMap<String, String> = HashMap::new();
+    // Only values that come FROM install_profile.json may be run through the
+    // "[maven:coord]" / "/relative-to-resource-dir" / "'literal'" grammar. Paths
+    // AML computes itself are already absolute and must be substituted verbatim:
+    // feeding them to the resolver makes "/home/yz/…" indistinguishable from
+    // Forge's "/data/client.lzma" and prepends the resource dir a second time.
+    // Windows hid this because "C:\…" never starts with '/'.
+    let mut forge_data: HashMap<String, String> = HashMap::new();
     if let Some(data) = &info.data {
         for (k, v) in data {
-            data_map.insert(k.clone(), v.client.clone());
+            forge_data.insert(k.clone(), resolve_data_value(&v.client, resource_dir)?);
         }
     }
-    data_map.insert("SIDE".into(), "client".into());
-    data_map.insert(
+    let mut computed: HashMap<String, String> = HashMap::new();
+    computed.insert("SIDE".into(), "client".into());
+    computed.insert(
         "MINECRAFT_JAR".into(),
-        client_jar.to_string_lossy().to_string(),
+        client_jar.to_string_lossy().into_owned(),
     );
-    data_map.insert("ROOT".into(), instance_dir.to_string_lossy().to_string());
-    data_map.insert(
+    computed.insert("ROOT".into(), instance_dir.to_string_lossy().into_owned());
+    computed.insert(
         "LIBRARY_DIR".into(),
-        libraries.to_string_lossy().to_string(),
+        libraries.to_string_lossy().into_owned(),
     );
 
     for processor in processors {
@@ -157,7 +159,7 @@ pub async fn run_processors(
         let args: Vec<String> = processor
             .args
             .iter()
-            .map(|a| substitute_processor_arg(a, &data_map, resource_dir))
+            .map(|a| substitute_processor_arg(a, &forge_data, &computed, resource_dir))
             .collect::<Result<Vec<_>>>()?;
 
         let mut command = Command::new(&java);
@@ -182,36 +184,44 @@ pub async fn run_processors(
     Ok(())
 }
 
+/// Resolve one install_profile.json `data` value to an absolute path or literal.
+fn resolve_data_value(value: &str, resource_dir: &str) -> Result<String> {
+    if let Some(artifact) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
+        return Ok(dirs::libraries(resource_dir)
+            .join(get_path_from_artifact(artifact)?)
+            .to_string_lossy()
+            .into_owned());
+    }
+    if let Some(relative) = value.strip_prefix('/') {
+        return Ok(std::path::Path::new(resource_dir)
+            .join(relative)
+            .to_string_lossy()
+            .into_owned());
+    }
+    // 'quoted' entries such as MC_SLIM_SHA carry their quotes in the json; Forge drops them.
+    Ok(value
+        .strip_prefix('\'')
+        .and_then(|v| v.strip_suffix('\''))
+        .unwrap_or(value)
+        .to_string())
+}
+
 fn substitute_processor_arg(
     arg: &str,
-    data: &HashMap<String, String>,
+    forge_data: &HashMap<String, String>,
+    computed: &HashMap<String, String>,
     resource_dir: &str,
 ) -> Result<String> {
     let mut out = arg.to_string();
-    // {KEY} replacements
-    for (k, v) in data {
+    // {KEY} replacements — both maps already hold final values, so nothing here
+    // may be re-interpreted as a relative or maven path.
+    for (k, v) in forge_data.iter().chain(computed.iter()) {
         let token = format!("{{{k}}}");
         if out.contains(&token) {
-            let replaced = if v.starts_with('[') && v.ends_with(']') {
-                let artifact = &v[1..v.len() - 1];
-                dirs::libraries(resource_dir)
-                    .join(get_path_from_artifact(artifact)?)
-                    .to_string_lossy()
-                    .to_string()
-            } else if v.starts_with('/') {
-                dirs::instance_dir(resource_dir, "")
-                    .parent()
-                    .unwrap_or(std::path::Path::new(resource_dir))
-                    .join(v.trim_start_matches('/'))
-                    .to_string_lossy()
-                    .to_string()
-            } else {
-                v.clone()
-            };
-            out = out.replace(&token, &replaced);
+            out = out.replace(&token, v);
         }
     }
-    // [maven:coord]
+    // [maven:coord] written directly in the processor args
     if out.starts_with('[') && out.ends_with(']') {
         let artifact = &out[1..out.len() - 1];
         out = dirs::libraries(resource_dir)
@@ -273,11 +283,7 @@ pub async fn launch_instance(
 
     let info = manifest::load_cached_version_info(&resource, &version_jar_id).await?;
     let required_major = super::args::required_java_major(&info);
-    let java_arch = match std::env::consts::ARCH {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => other,
-    };
+    let java_arch = std::env::consts::ARCH;
 
     let configured = instance
         .java_path
@@ -314,15 +320,19 @@ pub async fn launch_instance(
         .memory_mb
         .unwrap_or(defaults.memory_mb)
         .clamp(512, 131_072) as u32;
+    // 空白覆盖不应遮蔽全局默认参数；shell_words 支持引号包裹含空格的值。
     let extra_source = instance
         .extra_jvm_args
         .as_deref()
+        .filter(|s| !s.trim().is_empty())
         .or(defaults.extra_jvm_args.as_deref())
         .unwrap_or("");
-    let extra: Vec<String> = extra_source
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect();
+    let extra: Vec<String> = shell_words::split(extra_source).unwrap_or_else(|_| {
+        extra_source
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    });
 
     let auth = super::args::LaunchAuth::from(&account);
     dirs::ensure_instance_dir(&resource, &instance.path).await?;
@@ -393,6 +403,12 @@ pub async fn launch_instance(
             _ => {}
         }
     }
+    let quick_play = super::quick_play_version::QuickPlayOptions {
+        singleplayer: quick_play_singleplayer.as_deref(),
+        multiplayer: quick_play_multiplayer.as_deref(),
+        server_endpoint,
+        version: quick_play_version,
+    };
     let mut args = super::args::build_launch_args(
         &resource,
         &instance.path,
@@ -405,10 +421,7 @@ pub async fn launch_instance(
         memory,
         resolution,
         &extra,
-        quick_play_singleplayer.as_deref(),
-        quick_play_multiplayer.as_deref(),
-        server_endpoint,
-        quick_play_version,
+        &quick_play,
         rpc_server.address(),
     )?;
     if fullscreen

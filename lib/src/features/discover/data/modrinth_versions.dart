@@ -52,6 +52,36 @@ class ModrinthVersionInfo {
   }
 }
 
+/// 按发布时间降序排列（最新在前），原地排序并返回同一列表。
+///
+/// Modrinth 官方接口默认如此，但 CurseForge 官方接口默认按游戏版本排序、
+/// MCIM 镜像顺序也不稳定，因此所有来源在进入 UI / 安装流程前统一排序。
+List<ModrinthVersionInfo> sortVersionsNewestFirst(
+  List<ModrinthVersionInfo> versions,
+) {
+  versions.sort((a, b) {
+    final da = DateTime.tryParse(a.datePublished);
+    final db = DateTime.tryParse(b.datePublished);
+    if (da != null && db != null) return db.compareTo(da);
+    return b.datePublished.compareTo(a.datePublished);
+  });
+  return versions;
+}
+
+/// 安装默认版本：最新正式版 → 最新 Beta → 最新 Alpha。
+/// 列表应已按发布时间降序排列；都不匹配时回退到列表第一个。
+ModrinthVersionInfo? pickPreferredVersion(
+  List<ModrinthVersionInfo> versions,
+) {
+  if (versions.isEmpty) return null;
+  for (final channel in const ['release', 'beta', 'alpha']) {
+    for (final v in versions) {
+      if (v.versionType.toLowerCase() == channel) return v;
+    }
+  }
+  return versions.first;
+}
+
 class ModrinthVersionFile {
   final String url;
   final String filename;

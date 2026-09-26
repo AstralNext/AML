@@ -2,6 +2,7 @@ import 'package:aml/src/features/discover/data/discover_ids.dart';
 import 'package:aml/src/features/discover/data/modrinth_api.dart';
 import 'package:aml/src/features/discover/ui/browse_filters.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/utils/format.dart';
 import 'package:aml/src/shared/widgets/components/common/pagination_widget.dart';
 import 'package:aml/src/shared/widgets/components/inputs/filter_multi_select.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ class ProjectVersionsSection extends StatefulWidget {
     required this.installedVersionId,
     required this.installingVersionId,
     this.initialSelectedGameVersion,
+    this.initialSelectedLoader,
     required this.onInstall,
     required this.colorScheme,
   });
@@ -26,6 +28,7 @@ class ProjectVersionsSection extends StatefulWidget {
   final String? installedVersionId;
   final String? installingVersionId;
   final String? initialSelectedGameVersion;
+  final String? initialSelectedLoader;
   final void Function(String versionId) onInstall;
   final ColorScheme colorScheme;
 
@@ -38,6 +41,7 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
 
   final Set<String> _selectedGameVersions = {};
   final Set<String> _selectedChannels = {};
+  final Set<String> _selectedLoaders = {};
   bool _showAllGameVersions = false;
   int _versionPage = 1;
 
@@ -49,6 +53,16 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
       _selectedGameVersions.add(initial);
       if (!_isReleaseGameVersion(initial)) {
         _showAllGameVersions = true;
+      }
+    }
+    // 从实例进入时自动预选该实例的平台（加载器）。
+    final initialLoader = widget.initialSelectedLoader;
+    if (initialLoader != null && initialLoader.isNotEmpty) {
+      final available = <String>{
+        for (final v in widget.versions) ...v.loaders,
+      };
+      if (available.contains(initialLoader)) {
+        _selectedLoaders.add(initialLoader);
       }
     }
   }
@@ -95,6 +109,31 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
     return list;
   }
 
+  /// 出现在版本列表中的平台（Fabric / Forge / Iris …），固定展示顺序。
+  List<String> get _availableLoaders {
+    final set = <String>{};
+    for (final v in widget.versions) {
+      set.addAll(v.loaders);
+    }
+    const order = [
+      'fabric',
+      'quilt',
+      'forge',
+      'neoforge',
+      'iris',
+      'optifine',
+      'minecraft',
+      'datapack',
+    ];
+    final list = set.toList()
+      ..sort((a, b) {
+        final ai = order.indexOf(a);
+        final bi = order.indexOf(b);
+        return (ai < 0 ? 99 : ai).compareTo(bi < 0 ? 99 : bi);
+      });
+    return list;
+  }
+
   List<ModrinthVersionInfo> get _filteredVersions {
     return widget.versions.where((v) {
       if (_selectedGameVersions.isNotEmpty &&
@@ -103,6 +142,10 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
       }
       if (_selectedChannels.isNotEmpty &&
           !_selectedChannels.contains(v.versionType.toLowerCase())) {
+        return false;
+      }
+      if (_selectedLoaders.isNotEmpty &&
+          !_selectedLoaders.any(v.loaders.contains)) {
         return false;
       }
       return true;
@@ -187,6 +230,11 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
           (c) => FilterMultiSelectOption(value: c, label: _channelLabel(c)),
         )
         .toList();
+    final loaderOptions = _availableLoaders
+        .map(
+          (l) => FilterMultiSelectOption(value: l, label: displayLoader(l)),
+        )
+        .toList();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -230,6 +278,27 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
                   onChanged: (next) {
                     setState(() {
                       _selectedChannels
+                        ..clear()
+                        ..addAll(next);
+                      _versionPage = 1;
+                    });
+                  },
+                ),
+              if (loaderOptions.isNotEmpty &&
+                  (gameOptions.isNotEmpty || channelOptions.isNotEmpty))
+                const SizedBox(width: 8),
+              if (loaderOptions.isNotEmpty)
+                FilterMultiSelect(
+                  label: _selectedLoaders.isEmpty
+                      ? '平台'
+                      : '平台 (${_selectedLoaders.length})',
+                  options: loaderOptions,
+                  selected: _selectedLoaders,
+                  colorScheme: widget.colorScheme,
+                  dropdownMinWidth: 160,
+                  onChanged: (next) {
+                    setState(() {
+                      _selectedLoaders
                         ..clear()
                         ..addAll(next);
                       _versionPage = 1;
@@ -486,7 +555,7 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
             SizedBox(
               width: 80,
               child: Text(
-                ModrinthApiService.formatDownloadCount(v.downloads),
+                formatDownloadCount(v.downloads),
                 textAlign: TextAlign.right,
                 style: TextStyle(
                   fontSize: 15,
@@ -501,19 +570,31 @@ class _ProjectVersionsSectionState extends State<ProjectVersionsSection> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   IconButton(
-                    tooltip: isInstalled ? '已安装' : (installing ? '安装中' : '安装'),
+                    tooltip: isInstalled
+                        ? '已安装'
+                        : (installing ? '安装中' : '安装'),
                     onPressed: isInstalled || installing
                         ? null
                         : () => widget.onInstall(v.id),
                     iconSize: 22,
-                    icon: Icon(
-                      isInstalled
-                          ? Icons.check_circle_outline
-                          : Icons.download_rounded,
-                      color: isInstalled
-                          ? tokens.colorBase.withValues(alpha: 0.45)
-                          : tokens.colorBrand,
-                    ),
+                    icon: isInstalled
+                        ? Icon(
+                            Icons.check_circle_outline,
+                            color: tokens.colorBase.withValues(alpha: 0.45),
+                          )
+                        : installing
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: tokens.colorBrand,
+                            ),
+                          )
+                        : Icon(
+                            Icons.download_rounded,
+                            color: tokens.colorBrand,
+                          ),
                   ),
                   IconButton(
                     tooltip: '在浏览器打开',

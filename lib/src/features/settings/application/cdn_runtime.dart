@@ -11,9 +11,6 @@ import 'package:path/path.dart' as p;
 class CdnRuntime {
   CdnRuntime._();
 
-  static const mcimHost = 'https://mod.mcimirror.top';
-  static const pysioHost = 'https://mcim-files.pysio.online';
-
   static bool officialFirst = false;
   static bool mcim = true;
   static bool pysio = true;

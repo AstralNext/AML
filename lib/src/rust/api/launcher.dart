@@ -6,8 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `element_to_dto`, `face_to_dto`, `map_category`, `map_file`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored because they are not marked as `pub`: `element_to_dto`, `empty`, `face_to_dto`, `map_category`, `map_file`, `mod_file_from_entry`, `progress_cb`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`, `from`
 
 /// Initialize launcher DB and directory layout under resource_dir.
 Future<void> initLauncher({required String resourceDir}) =>
@@ -704,6 +704,74 @@ class CapeDto {
           isEquipped == other.isEquipped;
 }
 
+class DeviceCodeLoginBeginDto {
+  final String loginId;
+  final String userCode;
+  final String verificationUri;
+  final BigInt interval;
+  final BigInt expiresIn;
+  final String message;
+
+  const DeviceCodeLoginBeginDto({
+    required this.loginId,
+    required this.userCode,
+    required this.verificationUri,
+    required this.interval,
+    required this.expiresIn,
+    required this.message,
+  });
+
+  @override
+  int get hashCode =>
+      loginId.hashCode ^
+      userCode.hashCode ^
+      verificationUri.hashCode ^
+      interval.hashCode ^
+      expiresIn.hashCode ^
+      message.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DeviceCodeLoginBeginDto &&
+          runtimeType == other.runtimeType &&
+          loginId == other.loginId &&
+          userCode == other.userCode &&
+          verificationUri == other.verificationUri &&
+          interval == other.interval &&
+          expiresIn == other.expiresIn &&
+          message == other.message;
+}
+
+class DeviceCodePollResultDto {
+  /// "pending" | "success" | "expired" | "declined" | "slow_down"
+  final String status;
+
+  /// Only present when status == "success".
+  final AccountDto? account;
+
+  /// Human-readable error for unexpected failures.
+  final String? error;
+
+  const DeviceCodePollResultDto({
+    required this.status,
+    this.account,
+    this.error,
+  });
+
+  @override
+  int get hashCode => status.hashCode ^ account.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DeviceCodePollResultDto &&
+          runtimeType == other.runtimeType &&
+          status == other.status &&
+          account == other.account &&
+          error == other.error;
+}
+
 class GameVersionDto {
   final String id;
   final String type;
@@ -1142,74 +1210,6 @@ class ModelFaceDto {
           v0 == other.v0 &&
           u1 == other.u1 &&
           v1 == other.v1;
-}
-
-class DeviceCodeLoginBeginDto {
-  final String loginId;
-  final String userCode;
-  final String verificationUri;
-  final BigInt interval;
-  final BigInt expiresIn;
-  final String message;
-
-  const DeviceCodeLoginBeginDto({
-    required this.loginId,
-    required this.userCode,
-    required this.verificationUri,
-    required this.interval,
-    required this.expiresIn,
-    required this.message,
-  });
-
-  @override
-  int get hashCode =>
-      loginId.hashCode ^
-      userCode.hashCode ^
-      verificationUri.hashCode ^
-      interval.hashCode ^
-      expiresIn.hashCode ^
-      message.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is DeviceCodeLoginBeginDto &&
-          runtimeType == other.runtimeType &&
-          loginId == other.loginId &&
-          userCode == other.userCode &&
-          verificationUri == other.verificationUri &&
-          interval == other.interval &&
-          expiresIn == other.expiresIn &&
-          message == other.message;
-}
-
-class DeviceCodePollResultDto {
-  /// "pending" | "success" | "expired" | "declined" | "slow_down"
-  final String status;
-
-  /// Only present when status == "success".
-  final AccountDto? account;
-
-  /// Human-readable error for unexpected failures.
-  final String? error;
-
-  const DeviceCodePollResultDto({
-    required this.status,
-    this.account,
-    this.error,
-  });
-
-  @override
-  int get hashCode => status.hashCode ^ account.hashCode ^ error.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is DeviceCodePollResultDto &&
-          runtimeType == other.runtimeType &&
-          status == other.status &&
-          account == other.account &&
-          error == other.error;
 }
 
 class PackContentCategoryDto {

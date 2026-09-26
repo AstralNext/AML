@@ -18,6 +18,8 @@ class InputBarWidget extends StatefulWidget {
     this.obscureText = false,
     this.controller,
     this.focusNode,
+    this.minLines,
+    this.maxLines,
   });
 
   final ColorScheme colorScheme;
@@ -32,6 +34,11 @@ class InputBarWidget extends StatefulWidget {
   final bool obscureText;
   final TextEditingController? controller;
   final FocusNode? focusNode;
+
+  /// 多行输入时的最小/最大行数（如环境变量每行一个 KEY=VALUE）。
+  /// 两者为 null 时保持单行行为。
+  final int? minLines;
+  final int? maxLines;
 
   @override
   State<InputBarWidget> createState() => _InputBarWidgetState();
@@ -105,8 +112,11 @@ class _InputBarWidgetState extends State<InputBarWidget> {
         break;
     }
 
+    final multiline = (widget.minLines ?? 1) > 1;
+
     return Container(
-      height: height,
+      height: multiline ? null : height,
+      padding: multiline ? const EdgeInsets.symmetric(vertical: 6) : null,
       decoration: BoxDecoration(
         color: tokens.colorButtonBg,
         borderRadius: BorderRadius.circular(12),
@@ -130,7 +140,10 @@ class _InputBarWidgetState extends State<InputBarWidget> {
             onSubmitted: widget.onSubmitted,
             textAlign: TextAlign.left,
             obscureText: widget.obscureText,
-            textInputAction: TextInputAction.done,
+            minLines: multiline ? widget.minLines : null,
+            maxLines: multiline ? widget.maxLines : 1,
+            textInputAction:
+                multiline ? TextInputAction.newline : TextInputAction.done,
             decoration: InputDecoration(
               hintText: hintText,
               prefixIcon: widget.prefixIcon != null

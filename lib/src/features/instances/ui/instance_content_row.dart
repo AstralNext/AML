@@ -12,6 +12,7 @@ class InstanceContentRow extends StatelessWidget {
   const InstanceContentRow({
     super.key,
     required this.tokens,
+    required this.instanceId,
     required this.mod,
     required this.busy,
     required this.updatingContentPaths,
@@ -24,6 +25,7 @@ class InstanceContentRow extends StatelessWidget {
   });
 
   final AppThemeTokens tokens;
+  final String instanceId;
   final rust.ModFileDto mod;
   final bool busy;
   final Set<String> updatingContentPaths;
@@ -48,7 +50,10 @@ class InstanceContentRow extends StatelessWidget {
 
     void openProject() {
       if (canOpenProject) {
-        getIt<NavigationState>().openProject(mod.projectId!);
+        getIt<NavigationState>().openProject(
+          mod.projectId!,
+          installInstanceId: instanceId,
+        );
       } else {
         onShowDetail();
       }
@@ -120,7 +125,9 @@ class InstanceContentRow extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 2),
-                          if (!mod.isMissing && author != null && author.isNotEmpty)
+                          if (!mod.isMissing &&
+                              author != null &&
+                              author.isNotEmpty)
                             GestureDetector(
                               behavior: HitTestBehavior.opaque,
                               onTap: canOpenAuthor ? openAuthor : null,

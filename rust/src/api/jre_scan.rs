@@ -192,7 +192,7 @@ fn registry_key_paths(key: &winreg::RegKey) -> HashSet<PathBuf> {
 }
 
 async fn check_java_at_paths(paths: HashSet<PathBuf>) -> Vec<JavaRuntimeVersion> {
-    stream::iter(paths.into_iter())
+    stream::iter(paths)
         .map(|path| tokio::spawn(async move { check_java_at_path(&path).await }))
         .buffer_unordered(32)
         .filter_map(|result| async move { result.ok().flatten() })

@@ -12,11 +12,13 @@ class ProjectOverviewSection extends StatelessWidget {
     super.key,
     required this.project,
     required this.showOriginal,
+    required this.translating,
     required this.onToggleOriginal,
   });
 
   final ModrinthProjectDetail project;
   final bool showOriginal;
+  final bool translating;
   final ValueChanged<bool> onToggleOriginal;
 
   @override
@@ -79,35 +81,49 @@ class ProjectOverviewSection extends StatelessWidget {
                   ),
                 ),
               ),
-              if (project.hasTranslation)
-                SegmentedButton<bool>(
-                  style: ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    textStyle: WidgetStatePropertyAll(
-                      TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: tokens.colorContrast,
-                      ),
+              SegmentedButton<bool>(
+                style: ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  textStyle: WidgetStatePropertyAll(
+                    TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: tokens.colorContrast,
                     ),
                   ),
-                  segments: const [
-                    ButtonSegment<bool>(
-                      value: false,
-                      label: Text('译文'),
-                    ),
-                    ButtonSegment<bool>(
-                      value: true,
-                      label: Text('原文'),
-                    ),
-                  ],
-                  selected: {showOriginal},
-                  onSelectionChanged: (next) {
-                    if (next.isEmpty) return;
-                    onToggleOriginal(next.first);
-                  },
                 ),
+                segments: [
+                  ButtonSegment<bool>(
+                    value: false,
+                    label: translating
+                        ? const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              SizedBox(width: 4),
+                              Text('译文'),
+                            ],
+                          )
+                        : const Text('译文'),
+                  ),
+                  const ButtonSegment<bool>(
+                    value: true,
+                    label: Text('原文'),
+                  ),
+                ],
+                selected: {showOriginal},
+                onSelectionChanged: (next) {
+                  if (next.isEmpty) return;
+                  onToggleOriginal(next.first);
+                },
+              ),
             ],
           ),
           const SizedBox(height: 8),

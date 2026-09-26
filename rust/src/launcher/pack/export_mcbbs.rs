@@ -6,12 +6,13 @@ use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::launcher::dirs;
-use crate::launcher::download::ProgressFn;
 use crate::state::db;
 use crate::state::models::ModLoader;
 use crate::state::{resource_dir, try_state};
 
-use super::export_common::{collect_pack_content_files, filter_paths_by_rel, ExportIncludes};
+use super::export_common::{
+    collect_pack_content_files, filter_paths_by_rel, PackExportOptions,
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,13 +48,16 @@ struct McbbsAddonOut {
 pub async fn export_instance_mcbbs(
     instance_id: &str,
     export_path: &str,
-    pack_name: Option<String>,
-    version: Option<String>,
-    description: Option<String>,
-    includes: ExportIncludes,
-    path_filter: Option<std::collections::HashSet<String>>,
-    on_progress: Option<ProgressFn>,
+    options: PackExportOptions,
 ) -> Result<()> {
+    let PackExportOptions {
+        pack_name,
+        version,
+        description,
+        includes,
+        path_filter,
+        on_progress,
+    } = options;
     let state = try_state()?;
     let resource = resource_dir().await?;
     let instance = db::get_instance(&state.pool, instance_id).await?;

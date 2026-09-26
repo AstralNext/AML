@@ -8,6 +8,7 @@ import 'package:aml/src/features/discover/data/discover_ids.dart';
 import 'package:aml/src/features/discover/data/discover_translation.dart';
 import 'package:aml/src/features/discover/data/modrinth_api.dart';
 import 'package:aml/src/features/discover/ui/content_install_modal.dart';
+import 'package:aml/src/features/discover/ui/content_version_picker.dart';
 import 'package:aml/src/features/discover/ui/project_detail_header.dart';
 import 'package:aml/src/features/discover/ui/project_detail_skeletons.dart';
 import 'package:aml/src/features/discover/ui/project_overview_section.dart';
@@ -45,13 +46,22 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
   List<ModrinthVersionInfo> _versions = [];
   String? _installingVersionId;
   String? _installedVersionId;
+
   /// When true, show source (untranslated) title / description / intro.
-  bool _showOriginal = false;
+  bool _showOriginal = true;
+
+  /// True while a user-requested translation is running.
+  bool _translating = false;
+
   /// Incremented on each completed load; remounts the versions section
   /// (resetting its filters, matching the previous in-place reset).
   int _loadEpoch = 0;
+
   /// Instance game version the versions filter preselects (browse context).
   String? _instanceGameVersion;
+
+  /// Instance platform (loader) the versions filter preselects (browse context).
+  String? _instanceLoader;
 
   NavigationState get _nav => getIt<NavigationState>();
 
@@ -67,6 +77,9 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         : ModrinthApiService.peekCachedProject(widget.projectId);
     if (cached != null) {
       _project = cached;
+    } else if (widget.preview != null) {
+      // 列表数据已包含头部所需全部字段，先渲染头部，后台拉详情补全正文/画廊/版本。
+      _project = ModrinthProjectDetail.fromPreview(widget.preview!);
     }
     _load();
   }
@@ -78,13 +91,20 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
       final cached = isCurseForgeProjectId(widget.projectId)
           ? CurseForgeApiService.peekCachedProject(widget.projectId)
           : ModrinthApiService.peekCachedProject(widget.projectId);
+      final initial = cached ??
+          (widget.preview != null
+              ? ModrinthProjectDetail.fromPreview(widget.preview!)
+              : null);
       setState(() {
-        _project = cached;
+        _project = initial;
         _versions = [];
         _author = null;
         _error = null;
         _loading = true;
-        _showOriginal = false;
+        _showOriginal = true;
+        _translating = false;
+        _instanceGameVersion = null;
+        _instanceLoader = null;
       });
       _load();
     }
@@ -113,6 +133,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
       final ModrinthProjectDetail project;
       final List<ModrinthVersionInfo> versions;
       String? installedVid;
+      String? effectiveLoader;
 
       if (isCf && cfModId != null) {
         project = await CurseForgeApiService.getProjectAsDetail(
@@ -123,15 +144,19 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
           versions =
               await CurseForgeApiService.getProjectVersionsAsModrinth(cfModId);
         } else {
+          effectiveLoader = _loaderForType(
+            project.projectType,
+            instance.loader,
+          );
           versions = await CurseForgeApiService.getProjectVersionsAsModrinth(
             cfModId,
             gameVersion: instance.gameVersion,
-            loader: _loaderForType(project.projectType, instance.loader),
+            loader: effectiveLoader,
           );
           try {
             final mods = await rust.listInstanceMods(instanceId: browseId!);
             for (final m in mods) {
-              if (m.projectId == project.id) {
+              if (sameProjectId(m.projectId, project.id)) {
                 installedVid = m.versionId;
                 break;
               }
@@ -150,16 +175,21 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
           widget.projectId,
           localize: false,
         );
+        effectiveLoader = _loaderForType(
+          project.projectType,
+          instance.loader,
+        );
         final versionsFuture = ModrinthApiService.getProjectVersions(
           project.id,
           gameVersion: instance.gameVersion,
-          loader: _loaderForType(project.projectType, instance.loader),
+          loader: effectiveLoader,
         );
         final installedFuture = () async {
           try {
             final mods = await rust.listInstanceMods(instanceId: browseId!);
             for (final m in mods) {
-              if (m.projectId == project.id || m.projectId == project.slug) {
+              if (sameProjectId(m.projectId, project.id) ||
+                  m.projectId == project.slug) {
                 return m.versionId;
               }
             }
@@ -171,19 +201,43 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
       }
 
       if (!mounted) return;
+
+      // 标题(MCDB) + 简介(MCIM) 立即汉化，与列表页一致；正文等待用户点「译文」。
+      final platformStr = isCf
+          ? DiscoverTranslation.platformCurseforge
+          : DiscoverTranslation.platformModrinth;
+      final projectIdStr = isCf
+          ? (cfModId?.toString() ?? widget.projectId)
+          : widget.projectId;
+
+      final header = await DiscoverTranslation.localizeHeader(
+        platform: platformStr,
+        projectId: projectIdStr,
+        slug: project.slug.isNotEmpty ? project.slug : null,
+        title: project.title,
+        description: project.description,
+      );
+
+      final localizedProject = project.copyWith(
+        title: header.title,
+        description: header.description,
+        sourceTitle: project.title,
+        sourceDescription: project.description,
+      );
+
       setState(() {
-        _project = project;
+        _project = localizedProject;
         _versions = versions;
         _installedVersionId = installedVid;
-        if (!project.hasTranslation) _showOriginal = false;
         _instanceGameVersion = instance?.gameVersion;
+        _instanceLoader = effectiveLoader;
         _loadEpoch++;
         _loading = false;
       });
       if (!isCf) {
         unawaited(_loadAuthor(project));
       }
-      unawaited(_localizeInBackground(project, isCf: isCf));
+      // 正文翻译改为按需触发：用户点击「译文」时才调用 _translateOnDemand。
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -193,42 +247,55 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
     }
   }
 
-  Future<void> _localizeInBackground(
-    ModrinthProjectDetail project, {
-    required bool isCf,
-  }) async {
+  /// 用户点击「译文」时按需翻译正文。标题/简介已在加载时汉化。
+  Future<void> _translateOnDemand(ModrinthProjectDetail project) async {
+    if (_translating) return;
+    if (project.sourceBody != null) return;
+    setState(() => _translating = true);
+    final sourceBody =
+        project.body.trim().isNotEmpty ? project.body : project.description;
     try {
-      final localized = await DiscoverTranslation.localizeDetail(
+      final isCf = isCurseForgeProjectId(project.id);
+      final zhBody = await DiscoverTranslation.localizeBody(
         platform: isCf
             ? DiscoverTranslation.platformCurseforge
             : DiscoverTranslation.platformModrinth,
         projectId: isCf
             ? (parseCurseForgeModId(project.id)?.toString() ?? project.id)
             : project.id,
-        slug: project.slug,
-        title: project.title,
-        description: project.description,
-        body: project.body.trim().isNotEmpty
-            ? project.body
-            : project.description,
+        overview: sourceBody,
       );
       if (!mounted) return;
       if (_project?.id != project.id) return;
-      final sourceBody = project.body.trim().isNotEmpty
-          ? project.body
-          : project.description;
+      final changed = zhBody != sourceBody;
       setState(() {
         _project = project.copyWith(
-          title: localized.title,
-          description: localized.description,
-          body: localized.body,
-          sourceTitle: project.title,
-          sourceDescription: project.description,
+          body: zhBody,
           sourceBody: sourceBody,
         );
-        if (!_project!.hasTranslation) _showOriginal = false;
       });
-    } catch (_) {}
+      if (!changed) {
+        showAppSnackBar('翻译未返回结果，已保持原文');
+      }
+    } catch (e) {
+      debugPrint('[translate] body failed: $e');
+      if (mounted) showAppSnackBar('翻译失败：$e');
+    } finally {
+      if (mounted) setState(() => _translating = false);
+    }
+  }
+
+  /// 原文/译文切换。仅控制正文；标题/简介已在加载时汉化。
+  void _toggleOriginal(bool v) {
+    // 选「译文」但正文云翻译开关关闭时，提示用户去设置开启。
+    if (!v && !DiscoverTranslation.detailBodyEnabled) {
+      showAppSnackBar('正文云翻译已关闭，请在 设置 → 翻译 中开启');
+      return;
+    }
+    setState(() => _showOriginal = v);
+    if (!v && _project != null && _project!.sourceBody == null) {
+      unawaited(_translateOnDemand(_project!));
+    }
   }
 
   Future<void> _loadAuthor(ModrinthProjectDetail project) async {
@@ -290,9 +357,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         rust.InstanceDto? linked;
         for (final i in getIt<InstanceStore>().instances.value) {
           final src = i.modpackSource?.toLowerCase();
-          if (src == 'modrinth' &&
-              i.modpackProjectId == project.id &&
-              !isCf) {
+          if (src == 'modrinth' && i.modpackProjectId == project.id && !isCf) {
             linked = i;
             break;
           }
@@ -378,13 +443,26 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         if (!mounted) return;
         setState(() => _installedVersionId = versionId);
       } else {
+        // 从实例「浏览内容」进入：先弹窗选择版本（默认最新），再装入该实例。
+        final browseInstanceId = _nav.browseInstallInstanceId.value;
+        if (browseInstanceId != null && _versions.isNotEmpty) {
+          final picked = await ContentVersionPicker.show(
+            context,
+            versions: _versions,
+            projectTitle: project.title,
+            currentVersionId: _installedVersionId,
+          );
+          if (picked == null || !mounted) return;
+          await _install(versionId: picked.id);
+          return;
+        }
         await ContentInstallHelper.installProject(
           context: context,
           projectId: project.id,
           title: project.title,
           projectType: project.projectType,
           preferredInstanceId: _nav.browseInstallInstanceId.value,
-          latestVersionHint: _versions.isNotEmpty ? _versions.first.id : null,
+          latestVersionHint: pickPreferredVersion(_versions)?.id,
           projectIconUrl: project.iconUrl,
           asUpdate: _installedVersionId != null,
           currentVersionId: _installedVersionId,
@@ -426,14 +504,10 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
       );
     }
 
-    if (project == null && preview == null) {
+    if (project == null) {
       if (_loading) {
         return ProjectDetailSkeleton(onBack: () => _nav.closeProject());
       }
-      return errorView(_error ?? '未找到项目');
-    }
-    if (project == null) {
-      // Preview available but the full detail failed to load.
       return errorView(_error ?? '未找到项目');
     }
 
@@ -443,9 +517,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
       final isCf = isCurseForgeProjectId(project.id);
       for (final i in getIt<InstanceStore>().instances.value) {
         final src = i.modpackSource?.toLowerCase();
-        if (src == 'modrinth' &&
-            !isCf &&
-            i.modpackProjectId == project.id) {
+        if (src == 'modrinth' && !isCf && i.modpackProjectId == project.id) {
           linkedModpack = i;
           break;
         }
@@ -457,25 +529,29 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         }
       }
     }
+    // 「更新」判定基于默认推荐版本（最新正式版 → Beta → Alpha），
+    // 而不是时间上最新（可能是 Alpha）的版本。
+    final preferredVersionId = pickPreferredVersion(_versions)?.id;
     final installLabel = _loading
         ? '加载中…'
-        : (project.projectType == 'modpack'
-            ? (linkedModpack != null ? '切换版本' : '安装')
-            : (_installedVersionId == null
-                ? (browseId != null ? '安装到实例' : '安装')
-                : (_versions.isNotEmpty &&
-                        _versions.first.id != _installedVersionId
-                    ? '更新'
-                    : '已安装')));
+        : (_installingVersionId != null
+            ? '安装中…'
+            : (project.projectType == 'modpack'
+                ? (linkedModpack != null ? '切换版本' : '安装')
+                : (_installedVersionId == null
+                    ? (browseId != null ? '安装到实例' : '安装')
+                    : (preferredVersionId != null &&
+                            preferredVersionId != _installedVersionId
+                        ? '更新'
+                        : '已安装'))));
     final installDisabled = installLabel == '已安装';
 
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
           child: ProjectDetailHeader(
-            title: project.displayTitle(original: _showOriginal),
-            description:
-                project.displayDescription(original: _showOriginal),
+            title: project.displayTitle(original: false),
+            description: project.displayDescription(original: false),
             iconUrl: project.iconUrl,
             downloads: project.downloads,
             followers: project.followers,
@@ -484,11 +560,11 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
             serverSide: project.serverSide,
             categories: project.categories,
             displayCategories: preview?.displayCategories,
-            installLabel:
-                _installingVersionId == 'latest' ? '安装中…' : installLabel,
-            installEnabled: !_loading && !installDisabled &&
-                _installingVersionId == null,
-            installDisabledStyle: installDisabled,
+            installLabel: installLabel,
+            installEnabled:
+                !_loading && !installDisabled && _installingVersionId == null,
+            installDisabledStyle:
+                installDisabled || _installingVersionId != null,
             onInstall: () => _install(),
             author: _author,
             onAuthorTap: _openAuthor,
@@ -511,13 +587,17 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 12)),
         if (_tab == 0)
-          SliverToBoxAdapter(
-            child: ProjectOverviewSection(
-              project: project,
-              showOriginal: _showOriginal,
-              onToggleOriginal: (v) => setState(() => _showOriginal = v),
-            ),
-          )
+          if (_loading && project.body.isEmpty)
+            const SliverToBoxAdapter(child: ProjectDetailBodySkeleton())
+          else
+            SliverToBoxAdapter(
+              child: ProjectOverviewSection(
+                project: project,
+                showOriginal: _showOriginal,
+                translating: _translating,
+                onToggleOriginal: _toggleOriginal,
+              ),
+            )
         else if (_loading)
           const SliverToBoxAdapter(child: ProjectDetailBodySkeleton())
         else
@@ -529,6 +609,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
               installedVersionId: _installedVersionId,
               installingVersionId: _installingVersionId,
               initialSelectedGameVersion: _instanceGameVersion,
+              initialSelectedLoader: _instanceLoader,
               onInstall: (versionId) => _install(versionId: versionId),
               colorScheme: colorScheme,
             ),

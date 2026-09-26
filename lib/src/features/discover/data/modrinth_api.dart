@@ -120,10 +120,12 @@ class ModrinthApiService {
       throw Exception('加载版本失败: ${response.statusCode}');
     }
     final list = jsonDecode(response.body) as List<dynamic>;
-    return list
-        .whereType<Map<String, dynamic>>()
-        .map(ModrinthVersionInfo.fromJson)
-        .toList();
+    return sortVersionsNewestFirst(
+      list
+          .whereType<Map<String, dynamic>>()
+          .map(ModrinthVersionInfo.fromJson)
+          .toList(),
+    );
   }
 
   static Future<ModrinthSearchResult> searchProjects({
@@ -185,8 +187,14 @@ class ModrinthApiService {
       if (response.statusCode != 200) return null;
       final list = jsonDecode(response.body) as List<dynamic>;
       if (list.isEmpty) return null;
-      final first = list.first as Map<String, dynamic>;
-      return first['id'] as String?;
+      final versions = sortVersionsNewestFirst(
+        list
+            .whereType<Map<String, dynamic>>()
+            .map(ModrinthVersionInfo.fromJson)
+            .toList(),
+      );
+      // 默认安装最新正式版，没有再退 Beta / Alpha。
+      return pickPreferredVersion(versions)?.id;
     } catch (_) {
       return null;
     }
@@ -217,7 +225,13 @@ class ModrinthApiService {
       if (list.isEmpty) {
         return null;
       }
-      return (list.first as Map<String, dynamic>)['id'] as String?;
+      final versions = sortVersionsNewestFirst(
+        list
+            .whereType<Map<String, dynamic>>()
+            .map(ModrinthVersionInfo.fromJson)
+            .toList(),
+      );
+      return pickPreferredVersion(versions)?.id;
     } catch (_) {
       return null;
     }
@@ -291,7 +305,8 @@ class ModrinthApiService {
   static Future<List<ModrinthAuthorProject>> getUserProjects(
     String idOrUsername,
   ) async {
-    final response = await _get(Uri.parse('$baseUrl/user/$idOrUsername/projects'));
+    final response =
+        await _get(Uri.parse('$baseUrl/user/$idOrUsername/projects'));
     if (response.statusCode != 200) {
       throw Exception('加载作者项目失败: ${response.statusCode}');
     }
@@ -366,40 +381,5 @@ class ModrinthApiService {
     } catch (_) {
       return null;
     }
-  }
-
-  static String formatRelativeTime(String iso) {
-    final dt = DateTime.tryParse(iso)?.toLocal();
-    if (dt == null) return iso;
-    final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1) return '刚刚';
-    if (diff.inHours < 1) return '${diff.inMinutes}分钟前';
-    if (diff.inDays < 1) return '${diff.inHours}小时前';
-    if (diff.inDays < 7) return '${diff.inDays}天前';
-    if (diff.inDays < 30) return '${(diff.inDays / 7).floor()}周前';
-    if (diff.inDays < 365) return '${(diff.inDays / 30).floor()}个月前';
-    return '${(diff.inDays / 365).floor()}年前';
-  }
-
-  static String formatDownloadCount(int downloads) {
-    if (downloads >= 100000000) {
-      final v = downloads / 100000000;
-      final s = v >= 10 ? v.toStringAsFixed(1) : v.toStringAsFixed(2);
-      return '${_trimTrailingZeros(s)}亿';
-    }
-    if (downloads >= 10000) {
-      final v = downloads / 10000;
-      final s = v >= 100 ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
-      return '${_trimTrailingZeros(s)}万';
-    }
-    if (downloads >= 1000) {
-      return '${_trimTrailingZeros((downloads / 1000).toStringAsFixed(1))}K';
-    }
-    return downloads.toString();
-  }
-
-  static String _trimTrailingZeros(String s) {
-    if (!s.contains('.')) return s;
-    return s.replaceFirst(RegExp(r'\.?0+$'), '');
   }
 }

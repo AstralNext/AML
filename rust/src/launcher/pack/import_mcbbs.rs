@@ -167,7 +167,6 @@ pub(super) async fn install_mcbbs(
     let cf = CfPackMeta {
         name: meta.name,
         version: None,
-        author: None,
         game_version: meta.game_version,
         loader: meta.loader,
         loader_version: meta.loader_version,

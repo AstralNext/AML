@@ -1,7 +1,8 @@
-import 'package:aml/src/features/discover/data/modrinth_api.dart';
 import 'package:aml/src/features/discover/ui/browse_filters.dart';
 import 'package:aml/src/shared/theme/app_theme_tokens.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
+import 'package:aml/src/shared/utils/format.dart';
+import 'package:aml/src/shared/utils/relative_time.dart';
 import 'package:aml/src/shared/widgets/components/cached_remote_image.dart';
 import 'package:flutter/material.dart';
 
@@ -87,7 +88,7 @@ class AppCard extends StatelessWidget {
   String get _dateLabel {
     final iso = showPublishedDate ? dateCreated : dateModified;
     if (iso.isEmpty) return '';
-    return ModrinthApiService.formatRelativeTime(iso);
+    return relativeAge(iso);
   }
 
   @override
@@ -405,13 +406,13 @@ class _DownloadsFollowersRow extends StatelessWidget {
       children: [
         _StatRow(
           icon: Icons.download_rounded,
-          value: ModrinthApiService.formatDownloadCount(downloads),
+          value: formatDownloadCount(downloads),
           tokens: tokens,
         ),
         const SizedBox(width: 14),
         _StatRow(
           icon: Icons.favorite_border_rounded,
-          value: ModrinthApiService.formatDownloadCount(followers),
+          value: formatDownloadCount(followers),
           tokens: tokens,
         ),
       ],
@@ -424,15 +425,11 @@ class _StatRow extends StatelessWidget {
     required this.icon,
     required this.value,
     required this.tokens,
-    this.iconSize = 22,
-    this.fontSize = 16,
   });
 
   final IconData icon;
   final String value;
   final AppThemeTokens tokens;
-  final double iconSize;
-  final double fontSize;
 
   @override
   Widget build(BuildContext context) {
@@ -441,7 +438,7 @@ class _StatRow extends StatelessWidget {
       children: [
         Icon(
           icon,
-          size: iconSize,
+          size: 22,
           color: tokens.colorBase.withValues(alpha: 0.62),
         ),
         const SizedBox(width: 6),
@@ -449,7 +446,7 @@ class _StatRow extends StatelessWidget {
           value,
           style: TextStyle(
             color: tokens.colorBase.withValues(alpha: 0.88),
-            fontSize: fontSize,
+            fontSize: 16,
             fontWeight: FontWeight.w600,
           ),
         ),

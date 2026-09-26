@@ -60,4 +60,42 @@ class Project {
     this.dateCreated = '',
     this.dateModified = '',
   });
+
+  Project copyWith({
+    String? id,
+    String? title,
+    String? description,
+    String? author,
+    int? downloads,
+    int? followers,
+    String? iconUrl,
+    String? projectType,
+    String? clientSide,
+    String? serverSide,
+    String? latestVersion,
+    List<String>? categories,
+    List<String>? displayCategories,
+    List<String>? gameVersions,
+    String? dateCreated,
+    String? dateModified,
+  }) {
+    return Project(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      author: author ?? this.author,
+      downloads: downloads ?? this.downloads,
+      followers: followers ?? this.followers,
+      iconUrl: iconUrl ?? this.iconUrl,
+      projectType: projectType ?? this.projectType,
+      clientSide: clientSide ?? this.clientSide,
+      serverSide: serverSide ?? this.serverSide,
+      latestVersion: latestVersion ?? this.latestVersion,
+      categories: categories ?? this.categories,
+      displayCategories: displayCategories ?? this.displayCategories,
+      gameVersions: gameVersions ?? this.gameVersions,
+      dateCreated: dateCreated ?? this.dateCreated,
+      dateModified: dateModified ?? this.dateModified,
+    );
+  }
 }

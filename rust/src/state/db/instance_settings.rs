@@ -36,7 +36,7 @@ pub async fn update_instance(
     )
     .bind(&current.name)
     .bind(&current.java_path)
-    .bind(&current.memory_mb)
+    .bind(current.memory_mb)
     .bind(&current.extra_jvm_args)
     .bind(&current.loader_version)
     .bind(id)
@@ -75,18 +75,33 @@ pub async fn path_taken_by_other(
     Ok(row.is_some())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Partial update of an instance's launch settings. `None` leaves the column
+/// untouched; `Some(None)` clears it.
+#[derive(Debug, Default, Clone)]
+pub struct LaunchSettingsPatch {
+    pub window_width: Option<Option<i64>>,
+    pub window_height: Option<Option<i64>>,
+    pub fullscreen: Option<Option<bool>>,
+    pub environment_vars: Option<Option<String>>,
+    pub pre_launch_command: Option<Option<String>>,
+    pub wrapper_command: Option<Option<String>>,
+    pub post_exit_command: Option<Option<String>>,
+}
+
 pub async fn update_instance_launch_settings(
     pool: &SqlitePool,
     id: &str,
-    window_width: Option<Option<i64>>,
-    window_height: Option<Option<i64>>,
-    fullscreen: Option<Option<bool>>,
-    environment_vars: Option<Option<String>>,
-    pre_launch_command: Option<Option<String>>,
-    wrapper_command: Option<Option<String>>,
-    post_exit_command: Option<Option<String>>,
+    patch: LaunchSettingsPatch,
 ) -> Result<Instance> {
+    let LaunchSettingsPatch {
+        window_width,
+        window_height,
+        fullscreen,
+        environment_vars,
+        pre_launch_command,
+        wrapper_command,
+        post_exit_command,
+    } = patch;
     let mut current = get_instance(pool, id).await?;
     if let Some(value) = window_width {
         current.window_width = value;

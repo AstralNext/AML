@@ -6,7 +6,8 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
+// These functions are ignored because they are not marked as `pub`: `mcim_batch_translate`, `nonempty_trimmed`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`
 
 Future<List<ProjectI18nDto>> getProjectI18N(
         {required List<ProjectI18nKeyDto> keys}) =>
@@ -60,6 +61,81 @@ Future<PlatformInt64> clearTextI18NCache() =>
 /// Clear project titles/summaries and body cache.
 Future<PlatformInt64> clearAllTranslationCaches() =>
     RustLib.instance.api.crateApiProjectI18NClearAllTranslationCaches();
+
+/// 批量本地化项目标题/简介：本地 `project_i18n` 命中直返，
+/// 缺失简介走 MCIM 批量接口，新译文回写本地缓存。
+///
+/// 标题只来自 MCDB 词条（[LocalizeProjectInputDto::hint_zh_title]）或本地缓存，
+/// 不发起标题网络请求；`include_summary=false` 时为纯本地读取（无网络）。
+Future<List<LocalizedProjectDto>> localizeProjects(
+        {required String platform,
+        required bool includeSummary,
+        required List<LocalizeProjectInputDto> items}) =>
+    RustLib.instance.api.crateApiProjectI18NLocalizeProjects(
+        platform: platform, includeSummary: includeSummary, items: items);
+
+class LocalizeProjectInputDto {
+  /// modrinth: 原始 project id；curseforge: 纯数字 mod id（不带 `cf-` 前缀）。
+  final String projectId;
+  final String? slug;
+  final String sourceTitle;
+  final String sourceSummary;
+
+  /// 调用方已知的高质量中文标题（MCDB 词条），优先于本地缓存。
+  final String? hintZhTitle;
+
+  const LocalizeProjectInputDto({
+    required this.projectId,
+    this.slug,
+    required this.sourceTitle,
+    required this.sourceSummary,
+    this.hintZhTitle,
+  });
+
+  @override
+  int get hashCode =>
+      projectId.hashCode ^
+      slug.hashCode ^
+      sourceTitle.hashCode ^
+      sourceSummary.hashCode ^
+      hintZhTitle.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LocalizeProjectInputDto &&
+          runtimeType == other.runtimeType &&
+          projectId == other.projectId &&
+          slug == other.slug &&
+          sourceTitle == other.sourceTitle &&
+          sourceSummary == other.sourceSummary &&
+          hintZhTitle == other.hintZhTitle;
+}
+
+class LocalizedProjectDto {
+  final String projectId;
+  final String? zhTitle;
+  final String? zhSummary;
+
+  const LocalizedProjectDto({
+    required this.projectId,
+    this.zhTitle,
+    this.zhSummary,
+  });
+
+  @override
+  int get hashCode =>
+      projectId.hashCode ^ zhTitle.hashCode ^ zhSummary.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is LocalizedProjectDto &&
+          runtimeType == other.runtimeType &&
+          projectId == other.projectId &&
+          zhTitle == other.zhTitle &&
+          zhSummary == other.zhSummary;
+}
 
 class ProjectI18nDto {
   final String platform;

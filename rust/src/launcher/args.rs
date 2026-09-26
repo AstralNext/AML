@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use crate::meta::minecraft::{
@@ -14,7 +14,7 @@ use crate::state::models::Account;
 use super::dirs;
 use super::download::client_jar_path;
 use super::quick_play_version::{
-    QuickPlayServerVersion, QuickPlaySingleplayerVersion, QuickPlayVersion,
+    QuickPlayOptions, QuickPlayServerVersion, QuickPlaySingleplayerVersion, QuickPlayVersion,
 };
 use super::rules::{parse_rules, RuleFeatures};
 use super::theseus::{self, LAUNCHER_ENTRY};
@@ -65,6 +65,9 @@ pub fn required_java_major(info: &VersionInfo) -> u32 {
         .unwrap_or(8)
 }
 
+// The quick-play target travels together as `QuickPlayOptions`; the remaining
+// arguments are heterogeneous values independently resolved by the single caller.
+#[allow(clippy::too_many_arguments)]
 pub fn build_launch_args(
     resource_dir: &str,
     instance_path: &str,
@@ -77,10 +80,7 @@ pub fn build_launch_args(
     memory_mb: u32,
     resolution: (u32, u32),
     extra_jvm_args: &[String],
-    quick_play_singleplayer: Option<&str>,
-    quick_play_multiplayer: Option<&str>,
-    quick_play_server_endpoint: Option<(String, u16)>,
-    quick_play_version: QuickPlayVersion,
+    quick_play: &QuickPlayOptions<'_>,
     rpc_addr: SocketAddr,
 ) -> Result<LaunchArgs> {
     let cwd = dirs::instance_dir(resource_dir, instance_path);
@@ -104,18 +104,20 @@ pub fn build_launch_args(
 
     // Empty / whitespace must not enable Quick Play — MC may treat
     // `--quickPlaySingleplayer ""` as "open first world".
-    let quick_play_world = quick_play_singleplayer
+    let quick_play_world = quick_play
+        .singleplayer
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let quick_play_server = quick_play_multiplayer
+    let quick_play_server = quick_play
+        .multiplayer
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
     let supports_quick_play_sp = quick_play_world.is_some()
-        && quick_play_version.singleplayer == QuickPlaySingleplayerVersion::Builtin;
+        && quick_play.version.singleplayer == QuickPlaySingleplayerVersion::Builtin;
     let supports_quick_play_mp = quick_play_server.is_some()
         && matches!(
-            quick_play_version.server,
+            quick_play.version.server,
             QuickPlayServerVersion::Builtin
                 | QuickPlayServerVersion::BuiltinLegacy
                 | QuickPlayServerVersion::Injected
@@ -126,7 +128,7 @@ pub fn build_launch_args(
         has_quick_plays_support: supports_quick_play_sp || supports_quick_play_mp,
         is_quick_play_singleplayer: supports_quick_play_sp,
         is_quick_play_multiplayer: supports_quick_play_mp
-            && quick_play_version.server == QuickPlayServerVersion::Builtin,
+            && quick_play.version.server == QuickPlayServerVersion::Builtin,
         ..Default::default()
     };
 
@@ -172,12 +174,12 @@ pub fn build_launch_args(
     jvm_args.push(format!("-Dmodrinth.internal.ipc.port={}", rpc_addr.port()));
     jvm_args.push(format!(
         "-Dmodrinth.internal.quickPlay.serverVersion={}",
-        quick_play_server_json(quick_play_version)
+        quick_play_server_json(quick_play.version)
     ));
     if supports_quick_play_mp
-        && quick_play_version.server == QuickPlayServerVersion::Injected
+        && quick_play.version.server == QuickPlayServerVersion::Injected
     {
-        if let Some((host, port)) = &quick_play_server_endpoint {
+        if let Some((host, port)) = &quick_play.server_endpoint {
             jvm_args.push(format!("-Dmodrinth.internal.quickPlay.host={host}"));
             jvm_args.push(format!("-Dmodrinth.internal.quickPlay.port={port}"));
         }
@@ -258,7 +260,7 @@ pub fn build_launch_args(
             }
         }
     } else if supports_quick_play_mp {
-        match quick_play_version.server {
+        match quick_play.version.server {
             QuickPlayServerVersion::Builtin => {
                 if let Some(addr) = quick_play_server {
                     if !game_args.iter().any(|a| a.contains("quickPlayMultiplayer")) {
@@ -268,7 +270,7 @@ pub fn build_launch_args(
                 }
             }
             QuickPlayServerVersion::BuiltinLegacy => {
-                if let Some((host, port)) = &quick_play_server_endpoint {
+                if let Some((host, port)) = &quick_play.server_endpoint {
                     strip_flag_and_value(&mut game_args, "--quickPlayMultiplayer");
                     game_args.push("--server".into());
                     game_args.push(host.clone());
@@ -345,8 +347,8 @@ fn expand_argument(
 
 fn parse_jvm_placeholder(
     s: &str,
-    natives: &PathBuf,
-    libraries: &PathBuf,
+    natives: &Path,
+    libraries: &Path,
     classpath: &str,
     version_name: &str,
 ) -> String {
@@ -362,12 +364,14 @@ fn parse_jvm_placeholder(
         .replace("${classpath}", classpath)
 }
 
+// Pure substitution helper over the already-assembled launch context.
+#[allow(clippy::too_many_arguments)]
 fn parse_game_placeholder(
     s: &str,
     auth: &LaunchAuth,
-    game_dir: &PathBuf,
-    assets_root: &PathBuf,
-    game_assets: &PathBuf,
+    game_dir: &Path,
+    assets_root: &Path,
+    game_assets: &Path,
     info: &VersionInfo,
     version_name: &str,
     resolution: (u32, u32),

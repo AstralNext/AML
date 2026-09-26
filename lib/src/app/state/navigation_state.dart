@@ -109,14 +109,29 @@ class NavigationState {
     selectedWorld.value = null;
   }
 
-  void openProject(String projectIdOrSlug, {ProjectPreview? preview}) {
+  void openProject(
+    String projectIdOrSlug, {
+    ProjectPreview? preview,
+    String? installInstanceId,
+  }) {
     selectedProjectPreview.value = preview;
     selectedProjectId.value = projectIdOrSlug;
+    // 从实例内容列表进入项目详情时，带上实例上下文，让详情页自动预选
+    // 该实例的游戏版本与平台（与「浏览内容」同一套 browseInstallInstanceId 逻辑）。
+    if (installInstanceId != null && installInstanceId.isNotEmpty) {
+      browseInstallInstanceId.value = installInstanceId;
+    }
   }
 
   void closeProject() {
     selectedProjectId.value = null;
     selectedProjectPreview.value = null;
+    // 从实例内容列表进入项目时 openProject 设置了 browseInstallInstanceId，
+    // 返回实例后清理，避免之后进入发现页时意外处于「安装到实例」模式。
+    // 浏览内容路径下 selectedInstanceId 为 null，browseInstallInstanceId 保留。
+    if (selectedInstanceId.value != null) {
+      browseInstallInstanceId.value = null;
+    }
   }
 
   void openAuthor(
@@ -205,8 +220,9 @@ class NavigationState {
   }
 
   void _openDiscoverFacet(String facet) {
-    final returnPage =
-        currentPage.value == 'discover' ? discoverReturnPage.value : currentPage.value;
+    final returnPage = currentPage.value == 'discover'
+        ? discoverReturnPage.value
+        : currentPage.value;
 
     _authorReturnProjectId = null;
     _authorReturnProjectPreview = null;

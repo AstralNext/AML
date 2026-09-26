@@ -171,7 +171,8 @@ class CurseForgeApiService {
     final cached = _cacheService.get(cacheKey, _detailTtl);
     if (cached is String) return cached;
 
-    final response = await _get(Uri.parse('$baseUrl/v1/mods/$modId/description'));
+    final response =
+        await _get(Uri.parse('$baseUrl/v1/mods/$modId/description'));
     if (response.statusCode != 200) return '';
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final body = json['data']?.toString() ?? '';
@@ -196,10 +197,9 @@ class CurseForgeApiService {
     if (gameVersion != null && gameVersion.isNotEmpty) {
       params['gameVersion'] = gameVersion;
     }
-    final loaderType = loader == null ? null : loaderTypes[loader.toLowerCase()];
-    if (loaderType != null &&
-        gameVersion != null &&
-        gameVersion.isNotEmpty) {
+    final loaderType =
+        loader == null ? null : loaderTypes[loader.toLowerCase()];
+    if (loaderType != null && gameVersion != null && gameVersion.isNotEmpty) {
       params['modLoaderType'] = '$loaderType';
     }
 
@@ -209,10 +209,12 @@ class CurseForgeApiService {
     if (cached is String) {
       try {
         final list = jsonDecode(cached) as List<dynamic>;
-        return list
-            .whereType<Map<String, dynamic>>()
-            .map(CurseForgeFile.fromJson)
-            .toList();
+        return sortCfFilesNewestFirst(
+          list
+              .whereType<Map<String, dynamic>>()
+              .map(CurseForgeFile.fromJson)
+              .toList(),
+        );
       } catch (_) {}
     }
 
@@ -226,10 +228,12 @@ class CurseForgeApiService {
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final list = json['data'] as List<dynamic>? ?? const [];
     _cacheService.put(cacheKey, jsonEncode(list));
-    return list
-        .whereType<Map<String, dynamic>>()
-        .map(CurseForgeFile.fromJson)
-        .toList();
+    return sortCfFilesNewestFirst(
+      list
+          .whereType<Map<String, dynamic>>()
+          .map(CurseForgeFile.fromJson)
+          .toList(),
+    );
   }
 
   static Future<String?> getCompatibleFileId({
@@ -245,7 +249,7 @@ class CurseForgeApiService {
         pageSize: 20,
       );
       if (files.isEmpty) return null;
-      return files.first.id.toString();
+      return pickPreferredCfFile(files)?.id.toString();
     } catch (_) {
       return null;
     }
@@ -255,10 +259,14 @@ class CurseForgeApiService {
     try {
       final mod = await getMod(modId);
       if (mod.mainFileId != null) return mod.mainFileId.toString();
-      if (mod.latestFiles.isNotEmpty) return mod.latestFiles.first.id.toString();
-      final files = await getModFiles(modId, pageSize: 1);
+      if (mod.latestFiles.isNotEmpty) {
+        return pickPreferredCfFile(
+          sortCfFilesNewestFirst([...mod.latestFiles]),
+        )?.id.toString();
+      }
+      final files = await getModFiles(modId, pageSize: 20);
       if (files.isEmpty) return null;
-      return files.first.id.toString();
+      return pickPreferredCfFile(files)?.id.toString();
     } catch (_) {
       return null;
     }
@@ -480,6 +488,31 @@ class CurseForgeMod {
       licenseName: '',
     );
   }
+}
+
+/// 按上传时间降序排列（最新在前）。CF 官方接口默认按游戏版本排序、
+/// MCIM 镜像顺序不稳定，取 files.first 的调用方（兼容/最新版本解析）
+/// 依赖这里保证 first 即最新。
+List<CurseForgeFile> sortCfFilesNewestFirst(List<CurseForgeFile> files) {
+  files.sort((a, b) {
+    final da = DateTime.tryParse(a.fileDate);
+    final db = DateTime.tryParse(b.fileDate);
+    if (da != null && db != null) return db.compareTo(da);
+    return b.fileDate.compareTo(a.fileDate);
+  });
+  return files;
+}
+
+/// 默认安装文件：最新正式版(releaseType=1) → Beta(2) → Alpha(3)。
+/// 列表应已按上传时间降序；都不匹配时回退第一个。
+CurseForgeFile? pickPreferredCfFile(List<CurseForgeFile> files) {
+  if (files.isEmpty) return null;
+  for (final type in const [1, 2, 3]) {
+    for (final f in files) {
+      if (f.releaseType == type) return f;
+    }
+  }
+  return files.first;
 }
 
 class CurseForgeFile {

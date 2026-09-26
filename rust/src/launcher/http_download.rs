@@ -23,9 +23,6 @@ use super::progress::BytesProgressFn;
 /// Parallel download kicks in strictly above this size.
 pub const MULTI_THREAD_THRESHOLD: u64 = 10 * 1024 * 1024;
 
-/// Default cap when settings are missing; the live cap is [crate::config::download_max_parts].
-pub const MAX_PARTS: usize = 8;
-
 /// Keep parts coarse enough that TCP/TLS setup does not dominate.
 pub const MIN_PART_SIZE: u64 = 2 * 1024 * 1024;
 
@@ -654,7 +651,7 @@ mod tests {
     #[test]
     fn large_file_splits() {
         let size = 40 * 1024 * 1024;
-        let parts = plan_parts_with(size, MAX_PARTS);
+        let parts = plan_parts_with(size, 8);
         assert!(parts.len() >= 2);
         assert!(parts.len() <= 8);
         assert_eq!(parts.first().unwrap().0, 0);

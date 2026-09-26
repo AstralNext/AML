@@ -5,13 +5,12 @@ use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use crate::launcher::dirs;
-use crate::launcher::download::ProgressFn;
 use crate::state::db;
 use crate::state::models::ModLoader;
 use crate::state::{resource_dir, try_state};
 
 use super::export_common::{
-    collect_pack_content_files, filter_paths_by_rel, sanitize_pack_name, ExportIncludes,
+    collect_pack_content_files, filter_paths_by_rel, sanitize_pack_name, PackExportOptions,
 };
 
 /// Export an instance as a MultiMC zip.
@@ -28,11 +27,17 @@ use super::export_common::{
 pub async fn export_instance_multimc(
     instance_id: &str,
     export_path: &str,
-    pack_name: Option<String>,
-    includes: ExportIncludes,
-    path_filter: Option<std::collections::HashSet<String>>,
-    on_progress: Option<ProgressFn>,
+    options: PackExportOptions,
 ) -> Result<()> {
+    // MultiMC packs carry no pack-level version/description.
+    let PackExportOptions {
+        pack_name,
+        version: _,
+        description: _,
+        includes,
+        path_filter,
+        on_progress,
+    } = options;
     let state = try_state()?;
     let resource = resource_dir().await?;
     let instance = db::get_instance(&state.pool, instance_id).await?;

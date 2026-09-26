@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:aml/src/app/di/service_locator.dart';
-import 'package:aml/src/features/discover/data/content_translator.dart';
 import 'package:aml/src/features/discover/data/markup_safe_translator.dart';
 import 'package:aml/src/features/discover/data/mcdb_client.dart';
 import 'package:aml/src/features/discover/data/microsoft_translator.dart';
@@ -48,12 +47,30 @@ class DiscoverTranslation {
   static const platformModrinth = 'modrinth';
   static const platformCurseforge = 'curseforge';
 
+  /// 标题汉化（MCDB）开关。
+  static bool get titleEnabled {
+    try {
+      return getIt<UiSettingsState>().translateTitle.value;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// 简介汉化（MCIM）开关。
+  static bool get descriptionEnabled {
+    try {
+      return getIt<UiSettingsState>().translateDescription.value;
+    } catch (_) {
+      return true;
+    }
+  }
+
   /// 详情页云翻译（正文 HTML/Markdown）开关。
   static bool get detailBodyEnabled {
     try {
-      return getIt<UiSettingsState>().translateDiscoverContent.value;
+      return getIt<UiSettingsState>().translateBody.value;
     } catch (_) {
-      return true;
+      return false;
     }
   }
 
@@ -117,33 +134,51 @@ class DiscoverTranslation {
     return titles.isEmpty ? original : titles.first;
   }
 
-  /// Modrinth 列表：`network:false` 读本地 `project_i18n`；`true` 走 MCDB 并写回本地。
+  /// Modrinth 列表：`network:false` 纯读本地 `project_i18n`；
+  /// `true` 先查 MCDB 标题词条作为 hint，再由 Rust 合并缓存并批量拉 MCIM 简介。
   static Future<Map<String, LocalizedFields>> localizeModrinth({
     required List<({String id, String? slug, String title, String description})>
         projects,
     bool network = true,
   }) async {
     if (projects.isEmpty) return const {};
-    if (!network) {
-      return _localizeModrinthFromLocal(projects);
+
+    final hints = <String, String>{};
+    if (network && titleEnabled) {
+      try {
+        final rows =
+            await McdbClient.lookupByIds(projects.map((p) => p.id).toSet());
+        for (final entry in rows.entries) {
+          final zh = entry.value.zh.trim();
+          if (zh.isNotEmpty) hints[entry.key] = zh;
+        }
+      } catch (e) {
+        debugPrint('localizeModrinth mcdb lookup failed: $e');
+      }
     }
 
-    try {
-      final rows =
-          await McdbClient.lookupByIds(projects.map((p) => p.id).toSet());
-      final mapped = {
-        for (final p in projects)
-          p.id: LocalizedFields(
-            title: _preferZh(rows[p.id]?.zh, p.title),
-            description: _preferZh(rows[p.id]?.descZh, p.description),
-          ),
-      };
-      unawaited(_persistMcdbToLocal(projects, rows));
-      return mapped;
-    } catch (e) {
-      debugPrint('localizeModrinth mcdb failed: $e');
-      return _localizeModrinthFromLocal(projects);
-    }
+    return _localizeViaRust(
+      platform: platformModrinth,
+      projects: projects,
+      network: network,
+      hints: hints,
+    );
+  }
+
+  /// 通用批量本地化（无 MCDB 标题词条），供 CurseForge 列表使用。
+  /// [projects] 的 `id` 必须是平台侧原始 id（CF 传纯数字 mod id）。
+  static Future<Map<String, LocalizedFields>> localizeProjects({
+    required String platform,
+    required List<({String id, String? slug, String title, String description})>
+        projects,
+    bool network = true,
+  }) {
+    return _localizeViaRust(
+      platform: platform,
+      projects: projects,
+      network: network,
+      hints: const {},
+    );
   }
 
   static String _preferZh(String? zh, String fallback) {
@@ -151,17 +186,26 @@ class DiscoverTranslation {
     return (t != null && t.isNotEmpty) ? t : fallback;
   }
 
-  static Future<Map<String, LocalizedFields>> _localizeModrinthFromLocal(
-    List<({String id, String? slug, String title, String description})>
+  /// Rust 统一编排：本地 `project_i18n` 缓存 → 缺失简介 MCIM 批量 → 回写。
+  static Future<Map<String, LocalizedFields>> _localizeViaRust({
+    required String platform,
+    required List<({String id, String? slug, String title, String description})>
         projects,
-  ) async {
+    required bool network,
+    required Map<String, String> hints,
+  }) async {
     try {
-      final rows = await i18n.getProjectI18N(
-        keys: [
+      final rows = await i18n.localizeProjects(
+        platform: platform,
+        includeSummary: descriptionEnabled && network,
+        items: [
           for (final p in projects)
-            i18n.ProjectI18nKeyDto(
-              platform: platformModrinth,
+            i18n.LocalizeProjectInputDto(
               projectId: p.id,
+              slug: p.slug,
+              sourceTitle: p.title,
+              sourceSummary: p.description,
+              hintZhTitle: titleEnabled ? hints[p.id] : null,
             ),
         ],
       );
@@ -169,12 +213,16 @@ class DiscoverTranslation {
       return {
         for (final p in projects)
           p.id: LocalizedFields(
-            title: _preferZh(byId[p.id]?.zhTitle, p.title),
-            description: _preferZh(byId[p.id]?.zhSummary, p.description),
+            title: titleEnabled
+                ? _preferZh(byId[p.id]?.zhTitle, p.title)
+                : p.title,
+            description: descriptionEnabled
+                ? _preferZh(byId[p.id]?.zhSummary, p.description)
+                : p.description,
           ),
       };
     } catch (e) {
-      debugPrint('localizeModrinth local cache failed: $e');
+      debugPrint('localizeProjects rust failed: $e');
       return {
         for (final p in projects)
           p.id: LocalizedFields(title: p.title, description: p.description),
@@ -182,44 +230,58 @@ class DiscoverTranslation {
     }
   }
 
-  static Future<void> _persistMcdbToLocal(
-    List<({String id, String? slug, String title, String description})>
-        projects,
-    Map<String, McdbRow> rows,
-  ) async {
-    final upserts = <i18n.ProjectI18nUpsertDto>[];
-    for (final p in projects) {
-      final row = rows[p.id];
-      if (row == null) continue;
-      final zhTitle = row.zh.trim();
-      final zhSummary = row.descZh?.trim() ?? '';
-      if (zhTitle.isEmpty && zhSummary.isEmpty) continue;
-      upserts.add(
-        i18n.ProjectI18nUpsertDto(
-          platform: platformModrinth,
-          projectId: p.id,
-          slug: p.slug ?? row.slug,
-          sourceTitle: p.title,
-          zhTitle: zhTitle.isEmpty ? null : zhTitle,
-          sourceSummary: p.description,
-          zhSummary: zhSummary.isEmpty ? null : zhSummary,
-          titleProvider: 'mcdb',
-          summaryProvider: 'mcdb',
-          titleConfidence: 1.0,
-          summaryConfidence: 1.0,
-          status: 'auto',
-        ),
-      );
+  /// 详情页头部汉化：MCDB 标题（仅 Modrinth）+ MCIM 简介（本地缓存优先）。
+  /// CurseForge 的 [projectId] 必须是纯数字 mod id。
+  static Future<({String title, String description})> localizeHeader({
+    required String platform,
+    required String projectId,
+    String? slug,
+    required String title,
+    required String description,
+  }) async {
+    String? hint;
+    if (titleEnabled && platform == platformModrinth) {
+      try {
+        final rows = await McdbClient.lookupByIds({projectId});
+        final zh = rows[projectId]?.zh.trim();
+        if (zh != null && zh.isNotEmpty) hint = zh;
+      } catch (e) {
+        debugPrint('localizeHeader mcdb failed: $e');
+      }
     }
-    if (upserts.isEmpty) return;
+
+    var locTitle = title;
+    var locDesc = description;
     try {
-      await i18n.upsertProjectI18N(rows: upserts);
+      final rows = await i18n.localizeProjects(
+        platform: platform,
+        includeSummary: descriptionEnabled,
+        items: [
+          i18n.LocalizeProjectInputDto(
+            projectId: projectId,
+            slug: slug,
+            sourceTitle: title,
+            sourceSummary: description,
+            hintZhTitle: titleEnabled ? hint : null,
+          ),
+        ],
+      );
+      if (rows.isNotEmpty) {
+        locTitle = titleEnabled ? _preferZh(rows.first.zhTitle, title) : title;
+        locDesc = descriptionEnabled
+            ? _preferZh(rows.first.zhSummary, description)
+            : description;
+      }
     } catch (e) {
-      debugPrint('upsert project i18n failed: $e');
+      debugPrint('localizeHeader rust failed: $e');
     }
+    return (title: locTitle, description: locDesc);
   }
 
-  /// 详情页：Modrinth 标题/简介走 MCDB；正文走云翻译。CF 仅正文走云翻译。
+  /// 详情页翻译。
+  ///
+  /// - 标题/简介：见 [localizeHeader]（MCDB 标题 + MCIM 简介，缓存优先）。
+  /// - 正文：`MarkupSafeTranslator` 云翻译，`kind='body_html'` 哈希缓存。
   static Future<({String title, String description, String body})>
       localizeDetail({
     required String platform,
@@ -229,22 +291,15 @@ class DiscoverTranslation {
     required String description,
     required String body,
   }) async {
-    var locTitle = title;
-    var locDesc = description;
+    final header = await localizeHeader(
+      platform: platform,
+      projectId: projectId,
+      slug: slug,
+      title: title,
+      description: description,
+    );
 
-    if (platform == platformModrinth) {
-      try {
-        final rows = await McdbClient.lookupByIds({projectId});
-        final row = rows[projectId];
-        if (row != null) {
-          locTitle = row.zh.isNotEmpty ? row.zh : title;
-          locDesc = row.descZh ?? description;
-        }
-      } catch (e) {
-        debugPrint('localizeDetail mcdb failed: $e');
-      }
-    }
-
+    // 正文走云翻译 + 哈希缓存。
     final overview = body.trim().isNotEmpty ? body : description;
     final zhBody = detailBodyEnabled
         ? await _localizeBody(
@@ -255,10 +310,20 @@ class DiscoverTranslation {
         : overview;
 
     return (
-      title: locTitle,
-      description: locDesc,
+      title: header.title,
+      description: header.description,
       body: zhBody,
     );
+  }
+
+  /// 仅正文云翻译（带哈希缓存）。标题/简介由加载时的 MCDB/MCIM 处理。
+  static Future<String> localizeBody({
+    required String platform,
+    required String projectId,
+    required String overview,
+  }) async {
+    if (!detailBodyEnabled) return overview;
+    return _localizeBody(platform: platform, projectId: projectId, overview: overview);
   }
 
   static Future<String> _localizeBody({
@@ -293,7 +358,7 @@ class DiscoverTranslation {
           kind: kind,
           sourceText: trimmed,
           zhText: zh,
-          provider: ContentTranslator.bodyProviderId,
+          provider: TranslationProviders.microsoft,
         ));
       }
       return zh;

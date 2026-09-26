@@ -12,6 +12,7 @@ import 'package:aml/src/features/discover/ui/browse_filters.dart';
 import 'package:aml/src/features/discover/ui/project_environment.dart';
 import 'package:aml/src/features/instances/application/instance_store.dart';
 import 'package:aml/src/rust/api/launcher.dart' as rust;
+import 'package:aml/src/shared/theme/app_theme_tokens.dart';
 import 'package:aml/src/shared/theme/theme_token_access.dart';
 import 'package:aml/src/shared/widgets/components/buttons/custom_button.dart';
 import 'package:aml/src/shared/widgets/components/cards/app_card.dart';
@@ -522,334 +523,344 @@ class _DiscoverPageState extends State<DiscoverPage> {
               },
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                if (_availableLoaders.isNotEmpty) ...[
-                  FilterMultiSelect(
-                    label: _filterLabel('加载器', _selectedLoaders),
-                    options: [
-                      for (final loader in _availableLoaders)
-                        FilterMultiSelectOption(
-                          value: loader,
-                          label: displayLoader(loader),
-                        ),
-                    ],
-                    selected: _selectedLoaders,
-                    colorScheme: colorScheme,
-                    dropdownMinWidth: 200,
-                    onChanged: (next) {
-                      setState(() {
-                        _selectedLoaders
-                          ..clear()
-                          ..addAll(next);
-                      });
-                      _searchProjects(debounce: true);
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                if (_availableGameVersionIds.isNotEmpty) ...[
-                  FilterMultiSelect(
-                    label: _filterLabel('游戏版本', _selectedGameVersions),
-                    options: [
-                      for (final version in _availableGameVersionIds)
-                        FilterMultiSelectOption(
-                          value: version,
-                          label: version,
-                        ),
-                    ],
-                    selected: _selectedGameVersions,
-                    colorScheme: colorScheme,
-                    searchable: true,
-                    searchPlaceholder: '搜索版本…',
-                    dropdownMinWidth: 220,
-                    maxHeight: 360,
-                    footerLabel: '显示全部版本',
-                    footerValue: _showAllGameVersions,
-                    onFooterChanged: (value) {
-                      setState(() {
-                        _showAllGameVersions = value;
-                        if (!value) {
-                          _selectedGameVersions.removeWhere(
-                            (v) => !_isSelectableReleaseVersion(v),
-                          );
-                        }
-                      });
-                      _searchProjects(debounce: true);
-                    },
-                    onChanged: (next) {
-                      setState(() {
-                        _selectedGameVersions
-                          ..clear()
-                          ..addAll(next);
-                      });
-                      _searchProjects(debounce: true);
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                if (_showEnvironmentFilter) ...[
-                  FilterMultiSelect(
-                    label: _filterLabel('环境', _selectedEnvironments),
-                    options: const [
-                      FilterMultiSelectOption(
-                        value: 'client',
-                        label: '客户端',
-                      ),
-                      FilterMultiSelectOption(
-                        value: 'server',
-                        label: '服务端',
-                      ),
-                    ],
-                    selected: _selectedEnvironments,
-                    colorScheme: colorScheme,
-                    dropdownMinWidth: 180,
-                    onChanged: (next) {
-                      setState(() {
-                        _selectedEnvironments
-                          ..clear()
-                          ..addAll(next);
-                      });
-                      _searchProjects(debounce: true);
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                if (_showCategoryFilter && _availableCategories.isNotEmpty) ...[
-                  FilterMultiSelect(
-                    label: _filterLabel('分类', _selectedCategories),
-                    options: [
-                      for (final cat in _availableCategories)
-                        FilterMultiSelectOption(
-                          value: cat,
-                          label: displayCategory(cat),
-                        ),
-                    ],
-                    selected: _selectedCategories,
-                    colorScheme: colorScheme,
-                    searchable: true,
-                    searchPlaceholder: '搜索分类…',
-                    dropdownMinWidth: 260,
-                    maxHeight: 360,
-                    onChanged: (next) {
-                      setState(() {
-                        _selectedCategories
-                          ..clear()
-                          ..addAll(next);
-                      });
-                      _searchProjects(debounce: true);
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                DropdownButtonWidget(
-                  items: [
-                    const DropdownItem(display: '相关性', value: 'relevance'),
-                    const DropdownItem(display: '下载量', value: 'downloads'),
-                    if (!_isCurseForge)
-                      const DropdownItem(display: '关注数', value: 'follows'),
-                    const DropdownItem(display: '最新发布', value: 'newest'),
-                    const DropdownItem(display: '最近更新', value: 'updated'),
-                  ],
-                  selectedValue: _selectedSortValue,
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedSortValue = value;
-                    });
-                    _searchProjects(debounce: true);
-                  },
-                  colorScheme: colorScheme,
-                  prefix: '排序方式: ',
-                ),
-                const SizedBox(width: 8),
-                DropdownButtonWidget(
-                  items: [
-                    const DropdownItem(display: '5', value: '5'),
-                    const DropdownItem(display: '10', value: '10'),
-                    const DropdownItem(display: '15', value: '15'),
-                    const DropdownItem(display: '20', value: '20'),
-                    const DropdownItem(display: '50', value: '50'),
-                    if (!_isCurseForge)
-                      const DropdownItem(display: '100', value: '100'),
-                  ],
-                  selectedValue: _selectedPageSize.toString(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedPageSize = int.tryParse(value) ?? 20;
-                    });
-                    _searchProjects(debounce: true);
-                  },
-                  colorScheme: colorScheme,
-                  prefix: '查看: ',
-                ),
-                const Spacer(),
-                ValueListenableBuilder<int>(
-                  valueListenable: _controller.totalHits,
-                  builder: (context, totalHits, child) {
-                    final totalPages = totalHits == 0
-                        ? 1
-                        : ((totalHits - 1) ~/ _selectedPageSize) + 1;
-                    return PaginationWidget(
-                      totalPages: totalPages,
-                      currentPage: _currentPage,
-                      onPageChanged: (page) {
-                        setState(() {
-                          _currentPages[_selectedTabIndex] = page;
-                        });
-                        _searchProjects(page: page - 1);
-                      },
-                      colorScheme: colorScheme,
-                    );
-                  },
-                ),
-              ],
-            ),
+            _buildFilterRow(context, colorScheme),
             const SizedBox(height: 12),
-            Expanded(
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _controller.loading,
-                builder: (context, loading, child) {
-                  if (loading) {
-                    return const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 16),
-                          Text('正在加载中...', style: TextStyle(fontSize: 14)),
-                        ],
+            _buildResultArea(context, colorScheme, tokens),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 筛选行：加载器/游戏版本/环境/分类 + 排序 + 每页数量 + 分页。
+  Widget _buildFilterRow(BuildContext context, ColorScheme colorScheme) {
+    return Row(
+      children: [
+        if (_availableLoaders.isNotEmpty) ...[
+          FilterMultiSelect(
+            label: _filterLabel('加载器', _selectedLoaders),
+            options: [
+              for (final loader in _availableLoaders)
+                FilterMultiSelectOption(
+                  value: loader,
+                  label: displayLoader(loader),
+                ),
+            ],
+            selected: _selectedLoaders,
+            colorScheme: colorScheme,
+            dropdownMinWidth: 200,
+            onChanged: (next) {
+              setState(() {
+                _selectedLoaders
+                  ..clear()
+                  ..addAll(next);
+              });
+              _searchProjects(debounce: true);
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+        if (_availableGameVersionIds.isNotEmpty) ...[
+          FilterMultiSelect(
+            label: _filterLabel('游戏版本', _selectedGameVersions),
+            options: [
+              for (final version in _availableGameVersionIds)
+                FilterMultiSelectOption(
+                  value: version,
+                  label: version,
+                ),
+            ],
+            selected: _selectedGameVersions,
+            colorScheme: colorScheme,
+            searchable: true,
+            searchPlaceholder: '搜索版本…',
+            dropdownMinWidth: 220,
+            maxHeight: 360,
+            footerLabel: '显示全部版本',
+            footerValue: _showAllGameVersions,
+            onFooterChanged: (value) {
+              setState(() {
+                _showAllGameVersions = value;
+                if (!value) {
+                  _selectedGameVersions.removeWhere(
+                    (v) => !_isSelectableReleaseVersion(v),
+                  );
+                }
+              });
+              _searchProjects(debounce: true);
+            },
+            onChanged: (next) {
+              setState(() {
+                _selectedGameVersions
+                  ..clear()
+                  ..addAll(next);
+              });
+              _searchProjects(debounce: true);
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+        if (_showEnvironmentFilter) ...[
+          FilterMultiSelect(
+            label: _filterLabel('环境', _selectedEnvironments),
+            options: const [
+              FilterMultiSelectOption(
+                value: 'client',
+                label: '客户端',
+              ),
+              FilterMultiSelectOption(
+                value: 'server',
+                label: '服务端',
+              ),
+            ],
+            selected: _selectedEnvironments,
+            colorScheme: colorScheme,
+            dropdownMinWidth: 180,
+            onChanged: (next) {
+              setState(() {
+                _selectedEnvironments
+                  ..clear()
+                  ..addAll(next);
+              });
+              _searchProjects(debounce: true);
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+        if (_showCategoryFilter && _availableCategories.isNotEmpty) ...[
+          FilterMultiSelect(
+            label: _filterLabel('分类', _selectedCategories),
+            options: [
+              for (final cat in _availableCategories)
+                FilterMultiSelectOption(
+                  value: cat,
+                  label: displayCategory(cat),
+                ),
+            ],
+            selected: _selectedCategories,
+            colorScheme: colorScheme,
+            searchable: true,
+            searchPlaceholder: '搜索分类…',
+            dropdownMinWidth: 260,
+            maxHeight: 360,
+            onChanged: (next) {
+              setState(() {
+                _selectedCategories
+                  ..clear()
+                  ..addAll(next);
+              });
+              _searchProjects(debounce: true);
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
+        DropdownButtonWidget(
+          items: [
+            const DropdownItem(display: '相关性', value: 'relevance'),
+            const DropdownItem(display: '下载量', value: 'downloads'),
+            if (!_isCurseForge)
+              const DropdownItem(display: '关注数', value: 'follows'),
+            const DropdownItem(display: '最新发布', value: 'newest'),
+            const DropdownItem(display: '最近更新', value: 'updated'),
+          ],
+          selectedValue: _selectedSortValue,
+          onChanged: (value) {
+            setState(() {
+              _selectedSortValue = value;
+            });
+            _searchProjects(debounce: true);
+          },
+          colorScheme: colorScheme,
+          prefix: '排序方式: ',
+        ),
+        const SizedBox(width: 8),
+        DropdownButtonWidget(
+          items: [
+            const DropdownItem(display: '5', value: '5'),
+            const DropdownItem(display: '10', value: '10'),
+            const DropdownItem(display: '15', value: '15'),
+            const DropdownItem(display: '20', value: '20'),
+            const DropdownItem(display: '50', value: '50'),
+            if (!_isCurseForge)
+              const DropdownItem(display: '100', value: '100'),
+          ],
+          selectedValue: _selectedPageSize.toString(),
+          onChanged: (value) {
+            setState(() {
+              _selectedPageSize = int.tryParse(value) ?? 20;
+            });
+            _searchProjects(debounce: true);
+          },
+          colorScheme: colorScheme,
+          prefix: '查看: ',
+        ),
+        const Spacer(),
+        ValueListenableBuilder<int>(
+          valueListenable: _controller.totalHits,
+          builder: (context, totalHits, child) {
+            final totalPages = totalHits == 0
+                ? 1
+                : ((totalHits - 1) ~/ _selectedPageSize) + 1;
+            return PaginationWidget(
+              totalPages: totalPages,
+              currentPage: _currentPage,
+              onPageChanged: (page) {
+                setState(() {
+                  _currentPages[_selectedTabIndex] = page;
+                });
+                _searchProjects(page: page - 1);
+              },
+              colorScheme: colorScheme,
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  /// 结果区：loading / error / 空态 / 项目列表。
+  Widget _buildResultArea(BuildContext context, ColorScheme colorScheme, AppThemeTokens tokens) {
+    return Expanded(
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _controller.loading,
+        builder: (context, loading, child) {
+          if (loading) {
+            return const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('正在加载中...', style: TextStyle(fontSize: 14)),
+                ],
+              ),
+            );
+          }
+
+          return ValueListenableBuilder<String?>(
+            valueListenable: _controller.error,
+            builder: (context, error, _) {
+              if (error != null) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.cloud_off_outlined,
+                          size: 40,
+                          color: tokens.colorBase.withValues(alpha: 0.55),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          '加载失败',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: tokens.colorContrast,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          error,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: tokens.colorBase.withValues(alpha: 0.7),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextButton.icon(
+                          onPressed: () =>
+                              _searchProjects(page: _currentPage - 1),
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('重试'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              return ValueListenableBuilder<List<Project>>(
+                valueListenable: _controller.projects,
+                builder: (context, projects, child) {
+                  if (projects.isEmpty) {
+                    return Center(
+                      child: Text(
+                        '没有找到匹配的内容',
+                        style: TextStyle(
+                          color: tokens.colorBase.withValues(alpha: 0.7),
+                        ),
                       ),
                     );
                   }
 
-                  return ValueListenableBuilder<String?>(
-                    valueListenable: _controller.error,
-                    builder: (context, error, _) {
-                      if (error != null) {
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 32),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.cloud_off_outlined,
-                                  size: 40,
-                                  color: tokens.colorBase.withValues(alpha: 0.55),
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  '加载失败',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w800,
-                                    color: tokens.colorContrast,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  error,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: tokens.colorBase.withValues(alpha: 0.7),
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                TextButton.icon(
-                                  onPressed: () =>
-                                      _searchProjects(page: _currentPage - 1),
-                                  icon: const Icon(Icons.refresh, size: 18),
-                                  label: const Text('重试'),
-                                ),
-                              ],
+                  return ListView.builder(
+                    addSemanticIndexes: false,
+                    itemCount: projects.length,
+                    itemBuilder: (context, index) {
+                      final project = projects[index];
+                      final state = _installState(project);
+                      return Padding(
+                        key: ValueKey(project.id),
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: AppCard(
+                          title: project.title,
+                          description: project.description,
+                          author: project.author,
+                          downloads: project.downloads,
+                          followers: project.followers,
+                          iconUrl: project.iconUrl ?? '',
+                          categories: project.categories,
+                          displayCategories: project.displayCategories,
+                          gameVersions: project.gameVersions,
+                          projectType: project.projectType,
+                          dateCreated: project.dateCreated,
+                          dateModified: project.dateModified,
+                          showPublishedDate:
+                              _selectedSortValue == 'newest',
+                          installLabel: state.label,
+                          installDisabled: state.disabled,
+                          installing:
+                              _installingProjectId == project.id,
+                          onTap: () => _nav.openProject(
+                            project.id,
+                            preview: ProjectPreview.fromProject(
+                              id: project.id,
+                              title: project.title,
+                              description: project.description,
+                              iconUrl: project.iconUrl,
+                              downloads: project.downloads,
+                              projectType: project.projectType,
+                              clientSide: project.clientSide,
+                              serverSide: project.serverSide,
                             ),
                           ),
-                        );
-                      }
-
-                      return ValueListenableBuilder<List<Project>>(
-                        valueListenable: _controller.projects,
-                        builder: (context, projects, child) {
-                          if (projects.isEmpty) {
-                            return Center(
-                              child: Text(
-                                '没有找到匹配的内容',
-                                style: TextStyle(
-                                  color: tokens.colorBase.withValues(alpha: 0.7),
-                                ),
-                              ),
-                            );
-                          }
-
-                          return ListView.builder(
-                            addSemanticIndexes: false,
-                            itemCount: projects.length,
-                            itemBuilder: (context, index) {
-                              final project = projects[index];
-                              final state = _installState(project);
-                              return Padding(
-                                key: ValueKey(project.id),
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: AppCard(
-                                  title: project.title,
-                                  description: project.description,
-                                  author: project.author,
-                                  downloads: project.downloads,
-                                  followers: project.followers,
-                                  iconUrl: project.iconUrl ?? '',
-                                  categories: project.categories,
-                                  displayCategories: project.displayCategories,
-                                  gameVersions: project.gameVersions,
-                                  projectType: project.projectType,
-                                  dateCreated: project.dateCreated,
-                                  dateModified: project.dateModified,
-                                  showPublishedDate:
-                                      _selectedSortValue == 'newest',
-                                  installLabel: state.label,
-                                  installDisabled: state.disabled,
-                                  installing:
-                                      _installingProjectId == project.id,
-                                  onTap: () => _nav.openProject(
-                                    project.id,
-                                    preview: ProjectPreview.fromProject(
-                                      id: project.id,
-                                      title: project.title,
-                                      description: project.description,
-                                      iconUrl: project.iconUrl,
-                                      downloads: project.downloads,
-                                      projectType: project.projectType,
-                                      clientSide: project.clientSide,
-                                      serverSide: project.serverSide,
+                          onAuthorTap: project.author.trim().isEmpty
+                              ? null
+                              : () => _nav.openAuthor(
+                                    project.author.trim(),
+                                    type: 'user',
+                                    preview: AuthorPreview(
+                                      id: project.author.trim(),
+                                      type: 'user',
+                                      displayName: project.author.trim(),
                                     ),
                                   ),
-                                  onAuthorTap: project.author.trim().isEmpty
-                                      ? null
-                                      : () => _nav.openAuthor(
-                                            project.author.trim(),
-                                            type: 'user',
-                                            preview: AuthorPreview(
-                                              id: project.author.trim(),
-                                              type: 'user',
-                                              displayName: project.author.trim(),
-                                            ),
-                                          ),
-                                  onInstall: state.disabled
-                                      ? null
-                                      : () => _install(project),
-                                ),
-                              );
-                            },
-                          );
-                        },
+                          onInstall: state.disabled
+                              ? null
+                              : () => _install(project),
+                        ),
                       );
                     },
                   );
                 },
-              ),
-            ),
-          ],
-        ),
+              );
+            },
+          );
+        },
       ),
     );
   }

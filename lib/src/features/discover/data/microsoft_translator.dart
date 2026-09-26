@@ -1,24 +1,37 @@
 import 'dart:convert';
 
 import 'package:aml/src/features/discover/data/cache_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-/// Microsoft Edge Translator (same public endpoints Axolotl uses).
+/// Translation provider ids used in persistent cache / MCDB metadata.
+abstract final class TranslationProviders {
+  static const mcdb = 'mcdb';
+  static const microsoft = 'microsoft';
+}
+
+/// Microsoft Edge Translator (public endpoint, no auth required).
+///
+/// As of 2026-08 the old token endpoint
+/// `https://edge.microsoft.com/translate/auth` returns 404. The current free
+/// path is `https://edge.microsoft.com/translate/translatetext`, which accepts
+/// a JSON array of plain strings and requires only a browser-like User-Agent.
 class MicrosoftTranslator {
   MicrosoftTranslator._();
 
-  static const _authUrl = 'https://edge.microsoft.com/translate/auth';
   static const _translateUrl =
-      'https://api-edge.cognitive.microsofttranslator.com/translate';
+      'https://edge.microsoft.com/translate/translatetext';
+
+  /// Browser-like UA is required by the Edge translatetext endpoint.
+  static const _userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.35';
 
   /// Edge/public endpoint is happier with smaller payloads.
   static const _maxCharsPerRequest = 4000;
 
   static const _cacheTtl = Duration(days: 7);
   static final CacheService cache = CacheService(maxEntries: 128);
-
-  static String? _token;
-  static DateTime? _tokenExpiresAt;
 
   static bool looksChinese(String text) =>
       RegExp(r'[\u4e00-\u9fff]').hasMatch(text);
@@ -73,80 +86,6 @@ class MicrosoftTranslator {
     }
   }
 
-  /// Translate many strings (order preserved). Failed items keep the original.
-  static Future<List<String>> translateMany(
-    List<String> texts, {
-    bool html = false,
-  }) async {
-    if (texts.isEmpty) return const [];
-
-    final out = List<String>.from(texts);
-    final pendingIndexes = <int>[];
-    final pendingTexts = <String>[];
-
-    for (var i = 0; i < texts.length; i++) {
-      final t = texts[i].trim();
-      if (t.isEmpty || isMostlyChinese(t)) {
-        out[i] = t;
-        continue;
-      }
-      final cacheKey = 'ms_tr_${html ? 'h' : 'p'}_${t.hashCode}';
-      final cached = cache.get(cacheKey, _cacheTtl);
-      if (cached is String && cached.isNotEmpty) {
-        out[i] = cached;
-        continue;
-      }
-      pendingIndexes.add(i);
-      pendingTexts.add(t);
-    }
-    if (pendingTexts.isEmpty) return out;
-
-    const chunkSize = 10;
-    for (var start = 0; start < pendingTexts.length; start += chunkSize) {
-      final end = (start + chunkSize).clamp(0, pendingTexts.length);
-      final chunk = pendingTexts.sublist(start, end);
-      // Long items are handled one-by-one. Never throw — keep originals.
-      for (var j = 0; j < chunk.length; j++) {
-        final src = chunk[j];
-        final idx = pendingIndexes[start + j];
-        try {
-          final limit = html ? 2500 : _maxCharsPerRequest;
-          final zh = src.length <= limit
-              ? (await _translateChunk([src], html: html)).first
-              : await _translateLong(src, html: html, maxChars: limit);
-          final trimmed = zh.trim();
-          if (trimmed.isEmpty) continue;
-          out[idx] = trimmed;
-          cache.put('ms_tr_${html ? 'h' : 'p'}_${src.hashCode}', trimmed);
-        } catch (_) {
-          // Keep original text; never fail the discover load path.
-        }
-      }
-    }
-    return out;
-  }
-
-  /// Map id → source text to id → Chinese (best-effort).
-  static Future<Map<String, String>> translateMap(
-    Map<String, String> idToText, {
-    bool html = false,
-  }) async {
-    if (idToText.isEmpty) return const {};
-    try {
-      final ids = idToText.keys.toList();
-      final sources = ids.map((id) => idToText[id] ?? '').toList();
-      final translated = await translateMany(sources, html: html);
-      final out = <String, String>{};
-      for (var i = 0; i < ids.length; i++) {
-        final zh = translated[i].trim();
-        if (zh.isNotEmpty) out[ids[i]] = zh;
-      }
-      return out;
-    } catch (_) {
-      return Map<String, String>.from(idToText);
-    }
-  }
-
   static Future<String> _translateLong(
     String text, {
     required bool html,
@@ -174,7 +113,35 @@ class MicrosoftTranslator {
     return buf.toString();
   }
 
-  /// Prefer paragraph / block-tag boundaries; never cut inside an HTML tag.
+  // —— 受保护片段（代码块/终端载荷）占位 token 的唯一出处 ——
+  // MarkupSafeTranslator 也从这里取用，不要再复制字面量。
+  static const protectOpenEntity = '&#xE000;';
+  static const protectCloseEntity = '&#xE001;';
+
+  /// 生成第 [idx] 个受保护片段的占位 token：`&#xE000;AML$idx&#xE001;`。
+  /// A split must never fall inside a token or the `<pre>`/`<code>`/terminal
+  /// payload it stands for gets leaked to the translator and corrupted.
+  static String protectToken(int idx) =>
+      '${protectOpenEntity}AML$idx$protectCloseEntity';
+
+  static final _protectOpen = RegExp(r'&(?:amp;)?#x[Ee]000;');
+  static final _protectClose = RegExp(r'&(?:amp;)?#x[Ee]001;');
+
+  /// If [pos] sits inside a protected token, return the index right after its
+  /// closing marker. Otherwise return null.
+  static int? _protectedTokenEnd(String text, int pos) {
+    final open = _protectOpen.allMatches(text.substring(0, pos));
+    if (open.isEmpty) return null;
+    final lastOpen = open.last;
+    final close = _protectClose.firstMatch(text.substring(lastOpen.start));
+    if (close == null) return null;
+    final tokenEnd = lastOpen.start + close.end;
+    if (pos < tokenEnd) return tokenEnd;
+    return null;
+  }
+
+  /// Prefer paragraph / block-tag boundaries; never cut inside an HTML tag
+  /// or a protected segment token.
   static List<String> _splitForTranslation(
     String text, {
     required bool html,
@@ -227,6 +194,11 @@ class MicrosoftTranslator {
         if (lastLt > lastGt && lastLt > maxChars ~/ 4) {
           end = start + lastLt;
         }
+        // Never split inside a protected (code/pre/terminal) token.
+        final tokenEnd = _protectedTokenEnd(text, end);
+        if (tokenEnd != null) {
+          end = tokenEnd;
+        }
       }
       if (end <= start) {
         end = (start + maxChars).clamp(0, text.length);
@@ -237,76 +209,59 @@ class MicrosoftTranslator {
     return parts;
   }
 
-  static Future<String> _ensureToken() async {
-    final now = DateTime.now();
-    if (_token != null &&
-        _tokenExpiresAt != null &&
-        now.isBefore(_tokenExpiresAt!)) {
-      return _token!;
-    }
-    final response = await http
-        .get(Uri.parse(_authUrl), headers: {'User-Agent': 'AML-App/1.0.0'})
-        .timeout(const Duration(seconds: 10));
-    if (response.statusCode != 200) {
-      throw Exception('Microsoft translate auth failed: ${response.statusCode}');
-    }
-    final token = response.body.trim();
-    if (token.isEmpty) {
-      throw Exception('Microsoft translate auth returned empty token');
-    }
-    _token = token;
-    _tokenExpiresAt = now.add(const Duration(minutes: 8));
-    return token;
-  }
-
   static Future<List<String>> _translateChunk(
     List<String> texts, {
     required bool html,
   }) async {
     if (texts.isEmpty) return const [];
-    var token = await _ensureToken();
 
-    Future<http.Response> send(String auth) {
-      final uri = Uri.parse(_translateUrl).replace(
-        queryParameters: {
-          'api-version': '3.0',
-          'to': 'zh-Hans',
-          'textType': html ? 'html' : 'plain',
-        },
-      );
-      return http
+    final uri = Uri.parse(_translateUrl).replace(
+      queryParameters: {
+        'to': 'zh-Hans',
+        'textType': html ? 'html' : 'plain',
+        'isEnterpriseClient': 'false',
+      },
+    );
+
+    http.Response response = await http
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'User-Agent': _userAgent,
+          },
+          // New endpoint expects a plain JSON array of strings, NOT
+          // [{"Text": "..."}] as the old Azure-style endpoint did.
+          body: jsonEncode(texts),
+        )
+        .timeout(const Duration(seconds: 30));
+
+    if (response.statusCode == 429) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      response = await http
           .post(
             uri,
             headers: {
               'Content-Type': 'application/json; charset=utf-8',
-              'Authorization': 'Bearer $auth',
-              'User-Agent': 'AML-App/1.0.0',
+              'User-Agent': _userAgent,
             },
-            body: jsonEncode([
-              for (final t in texts) {'Text': t},
-            ]),
+            body: jsonEncode(texts),
           )
           .timeout(const Duration(seconds: 30));
     }
-
-    var response = await send(token);
-    if (response.statusCode == 401 || response.statusCode == 403) {
-      _token = null;
-      _tokenExpiresAt = null;
-      token = await _ensureToken();
-      response = await send(token);
-    }
-    if (response.statusCode == 429) {
-      await Future<void>.delayed(const Duration(seconds: 2));
-      response = await send(token);
-    }
     if (response.statusCode != 200) {
+      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+      debugPrint(
+        '[ms-translate] HTTP ${response.statusCode} '
+        'body=${body.length > 200 ? body.substring(0, 200) : body}',
+      );
       throw Exception(
         'Microsoft translate failed: ${response.statusCode}',
       );
     }
 
     final list = jsonDecode(utf8.decode(response.bodyBytes)) as List<dynamic>;
+    debugPrint('[ms-translate] HTTP 200 items=${list.length}');
     final out = <String>[];
     for (var i = 0; i < texts.length; i++) {
       if (i >= list.length) {

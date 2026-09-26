@@ -11,7 +11,6 @@ import 'package:aml/core/window_manager.dart';
 import 'package:aml/src/features/accounts/application/account_avatar_cache.dart';
 import 'package:aml/src/features/instances/application/account_store.dart';
 import 'package:aml/src/features/instances/application/instance_store.dart';
-import 'package:aml/src/debug/memory_probe.dart';
 import 'package:aml/src/rust/frb_generated.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
@@ -52,8 +51,6 @@ Future<void> bootstrap({List<String> args = const []}) async {
     await WindowManagerUtils.initializeWindow();
     await getIt<WindowTrayController>().initialize();
   }
-
-  unawaited(MemoryProbe.runIfEnabled());
 }
 
 Future<void> _prefetchSkins() async {

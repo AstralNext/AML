@@ -141,7 +141,7 @@ impl BatchReporter {
 
     pub fn skip_file(&self) {
         let n = self.inner.completed.fetch_add(1, Ordering::Relaxed) + 1;
-        self.emit(n == self.inner.total || n % 20 == 0);
+        self.emit(n == self.inner.total || n.is_multiple_of(20));
     }
 
     pub fn begin_file(&self, name: &str) {

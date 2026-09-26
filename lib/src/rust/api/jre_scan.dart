@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'java_download.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `check_java_at_path`, `check_java_at_paths`, `collect_autoinstalled_jre_paths`, `collect_jre_candidate_paths`, `common_installation_paths`, `registry_key_paths`, `resolve_java_executable`, `windows_registry_paths`
+// These functions are ignored because they are not marked as `pub`: `check_java_at_path`, `check_java_at_paths`, `collect_autoinstalled_jre_paths`, `collect_jre_candidate_paths`, `common_installation_paths`, `resolve_java_executable`
 
 Future<List<JavaRuntimeVersion>> findFilteredJres(
         {required int javaVersion, String? appDataDir}) =>

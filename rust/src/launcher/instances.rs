@@ -108,13 +108,15 @@ pub async fn duplicate_instance(source_id: &str) -> Result<Instance> {
     db::update_instance_launch_settings(
         &state.pool,
         &created.id,
-        Some(source.window_width),
-        Some(source.window_height),
-        Some(source.fullscreen),
-        Some(source.environment_vars),
-        Some(source.pre_launch_command),
-        Some(source.wrapper_command),
-        Some(source.post_exit_command),
+        db::LaunchSettingsPatch {
+            window_width: Some(source.window_width),
+            window_height: Some(source.window_height),
+            fullscreen: Some(source.fullscreen),
+            environment_vars: Some(source.environment_vars),
+            pre_launch_command: Some(source.pre_launch_command),
+            wrapper_command: Some(source.wrapper_command),
+            post_exit_command: Some(source.post_exit_command),
+        },
     )
     .await?;
     let _ = db::set_instance_update_channel(
@@ -201,13 +203,15 @@ pub async fn update_instance_settings(
     db::update_instance_launch_settings(
         &state.pool,
         id,
-        window_width,
-        window_height,
-        fullscreen,
-        environment_vars,
-        pre_launch_command,
-        wrapper_command,
-        post_exit_command,
+        db::LaunchSettingsPatch {
+            window_width,
+            window_height,
+            fullscreen,
+            environment_vars,
+            pre_launch_command,
+            wrapper_command,
+            post_exit_command,
+        },
     )
     .await?;
 

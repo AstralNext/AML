@@ -132,11 +132,10 @@ class InstanceSettingsJavaTab extends StatelessWidget {
               child: InputBarWidget(
                 colorScheme: Theme.of(context).colorScheme,
                 size: InputBarSize.medium,
-                hintText: '输入 Java 参数…',
+                hintText: '输入 Java 参数，如 -Xmx4G -Dfoo=bar…',
                 controller: controller.jvmArgsController,
-                onChanged: (value) => controller.scheduleSave(
-                  () => controller.save(extraJvmArgs: value),
-                ),
+                focusNode: controller.jvmArgsFocusNode,
+                onChanged: controller.scheduleJvmArgsSave,
               ),
             ),
             const SizedBox(height: 22),
@@ -149,13 +148,12 @@ class InstanceSettingsJavaTab extends StatelessWidget {
               child: InputBarWidget(
                 colorScheme: Theme.of(context).colorScheme,
                 size: InputBarSize.medium,
-                hintText: 'KEY=VALUE',
+                hintText: '每行一个，格式 KEY=VALUE',
                 controller: controller.envVarsController,
-                onChanged: (value) => controller.scheduleSave(
-                  () => controller.save(
-                    environmentVars: controller.envVarsToJson(value),
-                  ),
-                ),
+                focusNode: controller.envVarsFocusNode,
+                minLines: 3,
+                maxLines: 6,
+                onChanged: controller.scheduleEnvVarsSave,
               ),
             ),
           ],

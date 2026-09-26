@@ -100,8 +100,6 @@ pub struct ProcessManager {
 pub struct RunningProcess {
     pub uuid: String,
     pub instance_id: String,
-    /// Quick Play world folder, if this launch entered a specific save.
-    pub quick_play_world: Option<String>,
     /// Wrapped for Sync access to the child process.
     pub child: Arc<AsyncMutex<Child>>,
     /// Kept alive for the process lifetime so the launch RPC stays connected.
@@ -224,6 +222,8 @@ impl ProcessManager {
         Ok(())
     }
 
+    // Process manager entry; the launch bundle is assembled by the single caller.
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         &self,
         instance_id: &str,
@@ -350,7 +350,6 @@ impl ProcessManager {
             RunningProcess {
                 uuid: uuid.clone(),
                 instance_id: instance_id_owned.clone(),
-                quick_play_world: quick_play_world.clone(),
                 child: child.clone(),
                 _rpc_server: rpc_server,
             },
