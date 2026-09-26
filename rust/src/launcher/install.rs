@@ -510,6 +510,13 @@ pub async fn launch_instance(
     for sub in ["java", "jna", "lwjgl", "netty"] {
         tokio::fs::create_dir_all(natives_root.join(sub)).await?;
     }
+    #[cfg(target_os = "linux")]
+    if super::download::has_system_glfw() {
+        let target_glfw = natives_root.join("libglfw.so");
+        if target_glfw.exists() || target_glfw.is_symlink() {
+            let _ = std::fs::remove_file(&target_glfw);
+        }
+    }
 
     let rpc_server = super::rpc::RpcServerBuilder::new().launch().await?;
     let authlib_injector = if account.kind == "yggdrasil" {
@@ -591,11 +598,38 @@ pub async fn launch_instance(
     let mut env_map: HashMap<String, String> = HashMap::new();
     #[cfg(target_os = "linux")]
     {
-        // On Linux under Wayland (especially with NVIDIA), Minecraft's LWJGL GLFW
-        // crashes in glfwCreateWindow (SIGSEGV) when attempting native Wayland without proper decorations.
-        // Forcing XWayland via GLFW_PLATFORM=x11 ensures rock-solid window creation.
-        if std::env::var("WAYLAND_DISPLAY").is_ok() {
-            env_map.insert("GLFW_PLATFORM".to_string(), "x11".to_string());
+        extern "C" {
+            fn getuid() -> u32;
+        }
+        let uid = unsafe { getuid() };
+        let run_user = format!("/run/user/{uid}");
+
+        if std::env::var("XDG_RUNTIME_DIR").is_err() && std::path::Path::new(&run_user).is_dir() {
+            env_map.insert("XDG_RUNTIME_DIR".to_string(), run_user.clone());
+        }
+
+        let wayland_socket = format!("{run_user}/wayland-0");
+        let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::path::Path::new(&wayland_socket).exists();
+
+        if has_wayland {
+            if std::env::var("WAYLAND_DISPLAY").is_err() {
+                env_map.insert("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string());
+            }
+        }
+
+        if std::env::var("DISPLAY").is_err() {
+            env_map.insert("DISPLAY".to_string(), ":0".to_string());
+        }
+
+        let dbus_socket = format!("{run_user}/bus");
+        if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_err()
+            && std::path::Path::new(&dbus_socket).exists()
+        {
+            env_map.insert(
+                "DBUS_SESSION_BUS_ADDRESS".to_string(),
+                format!("unix:path={dbus_socket}"),
+            );
         }
     }
 
