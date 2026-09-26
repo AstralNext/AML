@@ -253,8 +253,20 @@ pub async fn resolve_version_info(
         .versions
         .iter()
         .find(|v| v.id == game_version)
-        .ok_or_else(|| anyhow!("unknown Minecraft version: {game_version}"))?
-        .clone();
+        .cloned()
+        .or_else(|| {
+            let re = regex::Regex::new(r"1\.\d+(?:\.\d+)?").ok()?;
+            let clean = re.find(game_version)?.as_str();
+            mc_manifest.versions.iter().find(|v| v.id == clean).cloned()
+        })
+        .or_else(|| {
+            mc_manifest
+                .versions
+                .iter()
+                .find(|v| matches!(v.type_, crate::meta::minecraft::VersionType::Release))
+                .cloned()
+        })
+        .ok_or_else(|| anyhow!("unknown Minecraft version: {game_version}"))?;
 
     let client = http_client()?;
     let version_json = client
@@ -389,10 +401,21 @@ async fn resolve_loader_version(
 }
 
 pub fn version_index_in_manifest(manifest: &VersionManifest, game_version: &str) -> Result<usize> {
+    if let Some(pos) = manifest.versions.iter().position(|v| v.id == game_version) {
+        return Ok(pos);
+    }
+    if let Some(re) = regex::Regex::new(r"1\.\d+(?:\.\d+)?").ok() {
+        if let Some(m) = re.find(game_version) {
+            let clean = m.as_str();
+            if let Some(pos) = manifest.versions.iter().position(|v| v.id == clean) {
+                return Ok(pos);
+            }
+        }
+    }
     manifest
         .versions
         .iter()
-        .position(|v| v.id == game_version)
+        .position(|v| matches!(v.type_, crate::meta::minecraft::VersionType::Release))
         .ok_or_else(|| anyhow!("unknown Minecraft version: {game_version}"))
 }
 
@@ -400,7 +423,8 @@ pub async fn load_cached_version_info(
     resource_dir: &str,
     version_jar_id: &str,
 ) -> Result<VersionInfo> {
-    let path = dirs::versions(resource_dir)
+    let base_versions_dir = dirs::versions(resource_dir);
+    let path = base_versions_dir
         .join(version_jar_id)
         .join(format!("{version_jar_id}.json"));
     if let Some(info) = VERSION_INFO_CACHE
@@ -410,14 +434,69 @@ pub async fn load_cached_version_info(
     {
         return Ok(info);
     }
-    let text = tokio::fs::read_to_string(&path)
-        .await
-        .with_context(|| format!("missing version json at {}", path.display()))?;
-    let info: VersionInfo = serde_json::from_str(&text)?;
-    if let Ok(mut cache) = VERSION_INFO_CACHE.write() {
-        cache.insert(path, info.clone());
+    if path.exists() {
+        let text = tokio::fs::read_to_string(&path)
+            .await
+            .with_context(|| format!("missing version json at {}", path.display()))?;
+        if let Ok(info) = serde_json::from_str::<VersionInfo>(&text) {
+            if let Ok(mut cache) = VERSION_INFO_CACHE.write() {
+                cache.insert(path, info.clone());
+            }
+            return Ok(info);
+        }
+        if let Ok(partial) = serde_json::from_str::<PartialVersionInfo>(&text) {
+            if let Ok(parent) = Box::pin(load_cached_version_info(resource_dir, &partial.inherits_from)).await {
+                let merged = crate::meta::modded::merge_partial_version(partial, parent);
+                if let Ok(mut cache) = VERSION_INFO_CACHE.write() {
+                    cache.insert(path, merged.clone());
+                }
+                return Ok(merged);
+            }
+        }
     }
-    Ok(info)
+
+    // 目录/命名不一致时的回退搜索策略（适用于外部导入的自定义命名版本）
+    if let Ok(mut entries) = tokio::fs::read_dir(&base_versions_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let p = entry.path();
+            if p.is_dir() {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let candidate_json = p.join(format!("{name}.json"));
+                if candidate_json.exists() {
+                    if let Ok(text) = tokio::fs::read_to_string(&candidate_json).await {
+                        if let Ok(info) = serde_json::from_str::<VersionInfo>(&text) {
+                            if info.id == version_jar_id
+                                || name == version_jar_id
+                                || version_jar_id.starts_with(name)
+                                || name.starts_with(version_jar_id)
+                            {
+                                if let Ok(mut cache) = VERSION_INFO_CACHE.write() {
+                                    cache.insert(candidate_json, info.clone());
+                                }
+                                return Ok(info);
+                            }
+                        } else if let Ok(partial) = serde_json::from_str::<PartialVersionInfo>(&text) {
+                            if partial.id == version_jar_id
+                                || name == version_jar_id
+                                || version_jar_id.starts_with(name)
+                                || name.starts_with(version_jar_id)
+                            {
+                                if let Ok(parent) = Box::pin(load_cached_version_info(resource_dir, &partial.inherits_from)).await {
+                                    let merged = crate::meta::modded::merge_partial_version(partial, parent);
+                                    if let Ok(mut cache) = VERSION_INFO_CACHE.write() {
+                                        cache.insert(candidate_json, merged.clone());
+                                    }
+                                    return Ok(merged);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    anyhow::bail!("missing version json for {version_jar_id} in {}", base_versions_dir.display());
 }
 
 pub fn version_jar_id_for_instance(

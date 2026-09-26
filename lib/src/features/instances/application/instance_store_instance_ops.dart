@@ -215,7 +215,19 @@ mixin _InstanceStoreInstanceOps on _InstanceStoreCore {
       throw Exception('实例安装失败，请先重新安装');
     }
     if (instance.installStage != 'installed') {
-      await install(id);
+      final folder = await instanceFolderPath(id);
+      final dir = Directory(folder);
+      if (await dir.exists() && (await dir.list().isEmpty == false)) {
+        try {
+          await rust.syncInstanceContentMetadata(
+            instanceId: id,
+            checkUpdates: false,
+          );
+          await refresh();
+        } catch (_) {}
+      } else {
+        await install(id);
+      }
     }
 
     final requiredMajor = await rust.getRequiredJavaVersion(id: id);

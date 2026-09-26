@@ -433,11 +433,18 @@ pub fn get_classpath(
 
     let mut entries = Vec::new();
     entries.push(theseus_jar.to_string());
-    entries.push(
-        client_jar_path(resource_dir, version_jar_id)
-            .to_string_lossy()
-            .to_string(),
-    );
+    let primary_jar = client_jar_path(resource_dir, version_jar_id);
+    let resolved_jar = if primary_jar.exists() {
+        primary_jar
+    } else {
+        let base_jar = regex::Regex::new(r"1\.\d+(?:\.\d+)?")
+            .ok()
+            .and_then(|r| r.find(version_jar_id))
+            .map(|m| client_jar_path(resource_dir, m.as_str()))
+            .filter(|p| p.exists());
+        base_jar.unwrap_or(primary_jar)
+    };
+    entries.push(resolved_jar.to_string_lossy().to_string());
 
     let libs_root = dirs::libraries(resource_dir);
     for lib in libraries {

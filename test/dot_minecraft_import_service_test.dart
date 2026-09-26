@@ -125,5 +125,39 @@ VersionJvm:-XX:+UseG1GC -Dtest=true
       await sub.cancel();
       expect(paths, isA<List<String>>());
     });
+
+    test('correctly identifies unisolated standard official .minecraft layout and counts root saves/mods', () async {
+      final versionsDir = Directory(p.join(tempMcDir.path, 'versions', '1.20.4'));
+      await versionsDir.create(recursive: true);
+
+      // 仅包含原版标准 1.20.4.json，无 Pcl/Setup.ini 也无 hmclversion.cfg
+      final jsonFile = File(p.join(versionsDir.path, '1.20.4.json'));
+      await jsonFile.writeAsString(jsonEncode({
+        'id': '1.20.4',
+        'type': 'release',
+        'mainClass': 'net.minecraft.client.main.Main',
+      }));
+
+      // 标准官方游戏目录：saves、mods 和 options.txt 在 .minecraft 根目录下
+      final rootSaves = Directory(p.join(tempMcDir.path, 'saves', 'MySurvivalWorld'));
+      await rootSaves.create(recursive: true);
+      await File(p.join(rootSaves.path, 'level.dat')).writeAsString('dummy_level');
+
+      final rootMods = Directory(p.join(tempMcDir.path, 'mods'));
+      await rootMods.create(recursive: true);
+      await File(p.join(rootMods.path, 'optifine.jar')).writeAsString('dummy_mod');
+
+      final results = await DotMinecraftImportService.scanPath(tempMcDir.path);
+
+      expect(results.length, 1);
+      final game = results.first;
+      expect(game.id, '1.20.4');
+      expect(game.gameVersion, '1.20.4');
+      expect(game.loader, 'vanilla');
+      // 验证未显式配置时，根据官方 .minecraft 规范智能识别为非隔离
+      expect(game.isIsolated, isFalse);
+      expect(game.saveCount, 1);
+      expect(game.modCount, 1);
+    });
   });
 }

@@ -224,6 +224,13 @@ pub async fn update_instance_settings(
         .await?;
     }
 
+    let cur = db::get_instance(&state.pool, id).await?;
+    let resource = resource_dir().await?;
+    let dir = dirs::instance_dir(&resource, &cur.path);
+    if cur.install_stage == InstallStage::NotInstalled.as_str() && dir.exists() {
+        let _ = db::set_install_stage(&state.pool, id, InstallStage::Installed).await;
+    }
+
     db::get_instance(&state.pool, id).await
 }
 

@@ -719,14 +719,27 @@ class DotMinecraftImportService {
               }
             }
           } catch (_) {}
+        } else {
+          // 官方 .minecraft 与无显式配置的处理：
+          // 检查版本文件夹内是否存在 mods、saves 或 options.txt；
+          // 若版本文件夹内不存在，但 rootDir 根目录下存在，则按照官方规范判定为非隔离（统一在 .minecraft 根目录下）
+          final hasLocalMods = await Directory(p.join(verDir.path, 'mods')).exists();
+          final hasLocalSaves = await Directory(p.join(verDir.path, 'saves')).exists();
+          final hasLocalOptions = await File(p.join(verDir.path, 'options.txt')).exists();
+          if (!hasLocalMods && !hasLocalSaves && !hasLocalOptions) {
+            isIsolated = false;
+          }
         }
       }
 
       // 统计 Mods 数量
       int modCount = 0;
-      final modsDir = isIsolated
+      Directory modsDir = isIsolated
           ? Directory(p.join(verDir.path, 'mods'))
           : Directory(p.join(rootDir, 'mods'));
+      if (!await modsDir.exists() && isIsolated) {
+        modsDir = Directory(p.join(rootDir, 'mods'));
+      }
       if (await modsDir.exists()) {
         await for (final f in modsDir.list(followLinks: false)) {
           if (f is File &&
@@ -738,9 +751,12 @@ class DotMinecraftImportService {
 
       // 统计存档数量
       int saveCount = 0;
-      final savesDir = isIsolated
+      Directory savesDir = isIsolated
           ? Directory(p.join(verDir.path, 'saves'))
           : Directory(p.join(rootDir, 'saves'));
+      if (!await savesDir.exists() && isIsolated) {
+        savesDir = Directory(p.join(rootDir, 'saves'));
+      }
       if (await savesDir.exists()) {
         await for (final s in savesDir.list(followLinks: false)) {
           if (s is Directory && !p.basename(s.path).startsWith('.')) {
@@ -779,9 +795,55 @@ class DotMinecraftImportService {
     String loader = 'vanilla';
     String? loaderVersion;
 
+    // 1. 深度扫描 MultiMC / Prism / HMCL / PCL 的 patches 组合配置
+    final patches = json['patches'] as List<dynamic>?;
+    if (patches != null) {
+      for (final p in patches) {
+        if (p is Map<String, dynamic>) {
+          final pid = (p['id'] as String? ?? '').toLowerCase();
+          final pver = (p['version'] as String? ?? '').trim();
+          final pinherits = p['inheritsFrom'] as String?;
+
+          if (pid == 'game' || pid == 'minecraft') {
+            final m = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(pver);
+            if (m != null) gameVersion ??= m.group(0);
+          }
+          if (pinherits != null && pinherits.isNotEmpty) {
+            final m = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(pinherits);
+            if (m != null) gameVersion ??= m.group(0);
+          }
+
+          if (pid == 'forge') {
+            loader = 'forge';
+            final mcM = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(pver);
+            if (mcM != null) gameVersion ??= mcM.group(0);
+            final loaderMatch =
+                RegExp(r'forge[-:]?(\d+(\.\d+)+)').firstMatch(pver);
+            if (loaderMatch != null) {
+              loaderVersion ??= loaderMatch.group(1);
+            } else if (pver.contains('-')) {
+              loaderVersion ??= pver.split('-').last;
+            } else if (pver.isNotEmpty) {
+              loaderVersion ??= pver;
+            }
+          } else if (pid == 'fabric' || pid == 'fabric-loader') {
+            loader = 'fabric';
+            if (pver.isNotEmpty) loaderVersion ??= pver;
+          } else if (pid == 'neoforge') {
+            loader = 'neoforge';
+            if (pver.isNotEmpty) loaderVersion ??= pver;
+          } else if (pid == 'quilt' || pid == 'quilt-loader') {
+            loader = 'quilt';
+            if (pver.isNotEmpty) loaderVersion ??= pver;
+          }
+        }
+      }
+    }
+
     final libraries = (json['libraries'] as List<dynamic>?) ?? [];
     final mainClass = (json['mainClass'] as String?) ?? '';
 
+    // 2. 识别主类与类库
     if (mainClass.contains('knot.KnotClient') ||
         libraries.any((lib) => _libName(lib).contains('fabric-loader'))) {
       loader = 'fabric';
@@ -810,6 +872,8 @@ class DotMinecraftImportService {
         if (name.contains('forge:')) {
           final parts = name.split('forge:').last.split('-');
           if (parts.length >= 2) {
+            final mcM = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(parts[0]);
+            if (mcM != null) gameVersion ??= mcM.group(0);
             loaderVersion = parts[1];
           }
           break;
@@ -827,12 +891,90 @@ class DotMinecraftImportService {
       }
     }
 
-    if (gameVersion == null || gameVersion.isEmpty) {
+    // 3. 从各类库坐标中提取游戏版本及 Forge 补丁
+    for (final lib in libraries) {
+      final name = _libName(lib);
+      if (loader == 'vanilla') {
+        if (name.contains('net.minecraftforge:')) {
+          loader = 'forge';
+        } else if (name.contains('net.fabricmc:')) {
+          loader = 'fabric';
+        } else if (name.contains('net.neoforged:')) {
+          loader = 'neoforge';
+        }
+      }
+      if (name.contains('net.minecraftforge:fmlearlydisplay:') ||
+          name.contains('net.minecraftforge:fmlcore:') ||
+          name.contains('net.minecraftforge:forge:')) {
+        final verPart = name.split(':').last;
+        final mcM = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(verPart);
+        if (mcM != null) gameVersion ??= mcM.group(0);
+        if (loaderVersion == null && verPart.contains('-')) {
+          loaderVersion = verPart.split('-').last;
+        }
+      }
+      if (gameVersion == null &&
+          (name.contains('net.minecraft:client:') ||
+              name.contains('com.mojang:minecraft:'))) {
+        final mcM = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(name);
+        if (mcM != null) gameVersion ??= mcM.group(0);
+      }
+    }
+
+    // 4. 尝试从 clientVersion / jar 获取
+    if (gameVersion == null || !RegExp(r'\b1\.\d+(\.\d+)?\b').hasMatch(gameVersion)) {
+      final clientVer = json['clientVersion'] as String?;
+      if (clientVer != null) {
+        final m = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(clientVer);
+        if (m != null) gameVersion = m.group(0);
+      }
+    }
+    if (gameVersion == null || !RegExp(r'\b1\.\d+(\.\d+)?\b').hasMatch(gameVersion)) {
+      final jar = json['jar'] as String?;
+      if (jar != null) {
+        final m = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(jar);
+        if (m != null) gameVersion = m.group(0);
+      }
+    }
+
+    // 5. 尝试从 id 或 fallbackName 中提取标准 1.x.x
+    if (gameVersion == null || !RegExp(r'\b1\.\d+(\.\d+)?\b').hasMatch(gameVersion)) {
       final match = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(id);
       if (match != null) {
         gameVersion = match.group(0)!;
+      }
+    }
+    if (gameVersion == null || !RegExp(r'\b1\.\d+(\.\d+)?\b').hasMatch(gameVersion)) {
+      final match = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(fallbackName);
+      if (match != null) {
+        gameVersion = match.group(0)!;
+      }
+    }
+
+    // 6. 全 JSON 字符串兜底探测标准版本号，决不把中文目录名当作 gameVersion
+    if (gameVersion == null || !RegExp(r'\b1\.\d+(\.\d+)?\b').hasMatch(gameVersion)) {
+      final jsonStr = json.toString();
+      final match = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(jsonStr);
+      if (match != null) {
+        gameVersion = match.group(0)!;
       } else {
-        gameVersion = id;
+        gameVersion = '1.20.1';
+      }
+    }
+
+    // 规范化 gameVersion
+    final cleanMatch = RegExp(r'\b1\.\d+(\.\d+)?\b').firstMatch(gameVersion);
+    if (cleanMatch != null) {
+      gameVersion = cleanMatch.group(0)!;
+    }
+
+    // 清洗 loaderVersion，去掉前缀
+    if (loaderVersion != null) {
+      if (loaderVersion.startsWith('$gameVersion-')) {
+        loaderVersion = loaderVersion.substring('$gameVersion-'.length);
+      }
+      if (loaderVersion.startsWith('forge-')) {
+        loaderVersion = loaderVersion.substring('forge-'.length);
       }
     }
 
@@ -891,11 +1033,18 @@ class DotMinecraftImportService {
     final totalFolders = dirsToCopy.length;
     for (var i = 0; i < totalFolders; i++) {
       final folder = dirsToCopy[i];
-      final srcFolder = Directory(
+      Directory srcFolder = Directory(
         game.isIsolated
             ? p.join(game.sourceDir, folder)
             : p.join(game.rootDir, folder),
       );
+      // 双重保险：如果隔离模式下版本子文件夹内没有该目录，但根目录有，回退读取根目录
+      if (!await srcFolder.exists() && game.isIsolated) {
+        final rootFallback = Directory(p.join(game.rootDir, folder));
+        if (await rootFallback.exists()) {
+          srcFolder = rootFallback;
+        }
+      }
       if (await srcFolder.exists()) {
         final dstFolder = Directory(p.join(targetInstanceDir.path, folder));
         final baseP = 0.15 + (i / totalFolders) * 0.45;
@@ -914,32 +1063,81 @@ class DotMinecraftImportService {
       }
     }
 
-    final optionsSrc = File(
-      game.isIsolated
-          ? p.join(game.sourceDir, 'options.txt')
-          : p.join(game.rootDir, 'options.txt'),
-    );
-    if (await optionsSrc.exists()) {
-      await optionsSrc.copy(p.join(targetInstanceDir.path, 'options.txt'));
+    // 复制运行根文件（options.txt, servers.dat, hotbar.nbt, usercache.json, command_history.txt, realms_persistence.json）
+    final filesToCopy = [
+      'options.txt',
+      'servers.dat',
+      'hotbar.nbt',
+      'usercache.json',
+      'command_history.txt',
+      'realms_persistence.json',
+    ];
+    for (final fileName in filesToCopy) {
+      File fileSrc = File(
+        game.isIsolated
+            ? p.join(game.sourceDir, fileName)
+            : p.join(game.rootDir, fileName),
+      );
+      if (!await fileSrc.exists() && game.isIsolated) {
+        final rootFile = File(p.join(game.rootDir, fileName));
+        if (await rootFile.exists()) {
+          fileSrc = rootFile;
+        }
+      }
+      if (await fileSrc.exists()) {
+        try {
+          await fileSrc.copy(p.join(targetInstanceDir.path, fileName));
+        } catch (_) {}
+      }
     }
 
     onProgress?.call(0.65, '正在迁移核心 Jar 与版本定义…');
 
-    final amlMetaVersions = Directory(
-      p.join(resourceDir, 'meta', 'versions', game.id),
-    );
-    if (!await amlMetaVersions.exists()) {
-      await amlMetaVersions.create(recursive: true);
+    final expectedVersionJarId = game.loader == 'vanilla'
+        ? game.gameVersion
+        : '${game.gameVersion}-${game.loaderVersion ?? "unknown"}';
+
+    // 目标目录准备：包括原始 game.id 与 AML 规范期望的 expectedVersionJarId 及基底版本
+    final versionTargetDirs = <Directory>[
+      Directory(p.join(resourceDir, 'meta', 'versions', game.id)),
+      Directory(p.join(resourceDir, 'meta', 'versions', expectedVersionJarId)),
+      Directory(p.join(resourceDir, 'meta', 'versions', game.gameVersion)),
+    ];
+    for (final dir in versionTargetDirs) {
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
     }
 
+    // 1. 复制版本 json
     final srcJson = File(p.join(game.sourceDir, '${game.id}.json'));
     if (await srcJson.exists()) {
-      await srcJson.copy(p.join(amlMetaVersions.path, '${game.id}.json'));
+      for (final dir in versionTargetDirs) {
+        final name = p.basename(dir.path);
+        try {
+          await srcJson.copy(p.join(dir.path, '$name.json'));
+        } catch (_) {}
+      }
     }
 
-    final srcJar = File(p.join(game.sourceDir, '${game.id}.jar'));
-    if (await srcJar.exists()) {
-      await srcJar.copy(p.join(amlMetaVersions.path, '${game.id}.jar'));
+    // 2. 复制核心 jar 文件（若 Loader 版本无独立 jar，智能回退拉取继承的纯净版 jar）
+    File? srcJar = File(p.join(game.sourceDir, '${game.id}.jar'));
+    if (!await srcJar.exists()) {
+      final vanillaJar = File(
+        p.join(game.rootDir, 'versions', game.gameVersion, '${game.gameVersion}.jar'),
+      );
+      if (await vanillaJar.exists()) {
+        srcJar = vanillaJar;
+      }
+    }
+
+    if (srcJar != null && await srcJar.exists()) {
+      for (final dir in versionTargetDirs) {
+        final name = p.basename(dir.path);
+        try {
+          await srcJar.copy(p.join(dir.path, '$name.jar'));
+        } catch (_) {}
+      }
     }
 
     onProgress?.call(0.75, '正在智能预筛与多线程增量补齐库文件…');
@@ -980,26 +1178,30 @@ class DotMinecraftImportService {
 
     onProgress?.call(0.95, '正在继承启动设置与建立内容索引…');
 
-    if (game.memoryMb != null ||
-        game.javaPath != null ||
-        game.extraJvmArgs != null) {
-      await store.updateSettings(
-        id: created.id,
-        memoryMb: game.memoryMb,
-        javaPath: game.javaPath,
-        extraJvmArgs: game.extraJvmArgs,
-      );
-    }
+    // 始终调用 updateSettings 确保持久化，并触发 Rust 端将本地存在的实例标记为已安装
+    await store.updateSettings(
+      id: created.id,
+      memoryMb: game.memoryMb,
+      javaPath: game.javaPath,
+      extraJvmArgs: game.extraJvmArgs,
+    );
 
-    try {
-      await rust.syncInstanceContentMetadata(
-        instanceId: created.id,
-        checkUpdates: false,
-      );
-    } catch (_) {}
+    // 内容索引在后台异步运行，绝不阻塞当前导入弹窗的完成与关闭！
+    unawaited(
+      rust
+          .syncInstanceContentMetadata(
+            instanceId: created.id,
+            checkUpdates: false,
+          )
+          .then((_) => store.refresh())
+          .catchError((_) {}),
+    );
+
+    await store.refresh();
 
     onProgress?.call(1.0, '导入完成！');
-    return created;
+    final refreshedInstance = (await rust.getInstance(id: created.id));
+    return refreshedInstance;
   }
 
   static String? _normalizeJavaPath(String? raw) {
